@@ -170,3 +170,9 @@ def test_connector_lands_on_the_drawn_basis_box_edge() -> None:
     m = re.search(r'class="wb-edge"[^>]*d="M ([0-9.]+) ([0-9.]+) ', svg)
     assert float(m.group(1)) == pytest.approx(298), "right edge of the basis box"
     assert float(m.group(2)) == pytest.approx(20 + 144 / 2), "vertical middle of the basis box"
+
+
+def test_static_svg_carries_no_script() -> None:
+    svg = dump_to_svg(_dump())
+    assert "<script" not in svg
+    assert "javascript:" not in svg

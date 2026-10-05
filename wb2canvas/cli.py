@@ -3,7 +3,8 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import click
 from dotenv import find_dotenv, load_dotenv
@@ -22,6 +23,26 @@ def run() -> None:
     """
     load_dotenv(find_dotenv(usecwd=True), override=False)
     main()
+
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+FORMAT_HELP = (
+    "Output format; repeat for several. canvas = JSON Canvas (editable in "
+    "Obsidian), svg = static replica (safe to embed), html = interactive "
+    "viewer (drag, pan, zoom)."
+)
+
+
+def format_option(default: tuple[str, ...] = ("canvas",)) -> Callable[[F], F]:
+    return click.option(
+        "-f", "--format", "formats",
+        type=click.Choice(["canvas", "svg", "html"]),
+        multiple=True,
+        default=default,
+        show_default=True,
+        help=FORMAT_HELP,
+    )
 
 
 def _env(name: str) -> str | None:
@@ -135,8 +156,9 @@ def discover(ctx: click.Context, space: str, method: str) -> None:
     "vault_dir",
     type=click.Path(file_okay=False, path_type=Path),
     default=None,
-    help="If set, also convert + deploy each extracted board into this vault.",
+    help="If set, also render each extracted board into this vault.",
 )
+@format_option()
 @click.option(
     "--vault-prefix",
     default="",
@@ -152,6 +174,7 @@ def extract(
     no_media: bool,
     headed: bool,
     vault_dir: Path | None,
+    formats: tuple[str, ...],
     vault_prefix: str,
 ) -> None:
     """Extract a board (or every board in a space) via headless browser."""
@@ -243,7 +266,7 @@ def extract(
             _echo_results(
                 export_dump(
                     target,
-                    ["canvas"],
+                    formats,
                     dest_dir=_vault_dest(vault_dir, vault_prefix),
                     vault_prefix=vault_prefix.strip("/"),
                     force=force,
@@ -259,14 +282,7 @@ def extract(
 @click.argument("dump_path", type=click.Path(exists=False, dir_okay=False, path_type=Path), required=False)
 @click.option("--all", "all_space", help="Convert every dump in this space.")
 @click.option("--force", is_flag=True)
-@click.option(
-    "--format",
-    "fmt",
-    type=click.Choice(["canvas", "svg"]),
-    default="canvas",
-    show_default=True,
-    help="canvas = JSON Canvas (Obsidian-editable); svg = self-contained SVG (visual fidelity).",
-)
+@format_option()
 @click.option(
     "--vault",
     "vault_dir",
@@ -291,7 +307,7 @@ def extract(
     "--shape-map",
     "shape_map_str",
     default="",
-    help="(SVG only) Override stereotype mapping. Format: '4=ellipse,5=diamond,11=note'. "
+    help="(svg/html) Override stereotype mapping. Format: '4=ellipse,5=diamond,11=note'. "
          "Supported names: rect cylinder ellipse diamond triangle hexagon pentagon "
          "octagon parallelogram trapezoid note document cloud star.",
 )
@@ -301,13 +317,13 @@ def convert(
     dump_path: Path | None,
     all_space: str | None,
     force: bool,
-    fmt: str,
+    formats: tuple[str, ...],
     vault_dir: Path | None,
     vault_prefix: str,
     collision_fix: bool,
     shape_map_str: str,
 ) -> None:
-    """Render dump.json files as JSON Canvas (default) or SVG."""
+    """Render dump.json files as JSON Canvas, SVG and/or an HTML viewer."""
     from .deploy import export_dump
 
     if not dump_path and not all_space:
@@ -329,7 +345,7 @@ def convert(
         _echo_results(
             export_dump(
                 target,
-                [fmt],
+                formats,
                 dest_dir=_vault_dest(vault_dir, vault_prefix),
                 vault_prefix=vault_prefix.strip("/"),
                 force=force,
@@ -351,9 +367,10 @@ def convert(
     "vault_dir",
     type=click.Path(file_okay=False, path_type=Path),
     default=None,
-    help="Deploy converted canvases + media into this Obsidian vault.",
+    help="Deploy rendered boards + media into this Obsidian vault.",
 )
 @click.option("--vault-prefix", default="", help="Subdirectory within the vault.")
+@format_option()
 @click.pass_context
 def export(
     ctx: click.Context,
@@ -365,8 +382,9 @@ def export(
     headed: bool,
     vault_dir: Path | None,
     vault_prefix: str,
+    formats: tuple[str, ...],
 ) -> None:
-    """End-to-end: discover → extract → convert every whiteboard in a space."""
+    """End-to-end: discover → extract → render every whiteboard in a space."""
     ctx.invoke(discover, space=space, method=method)
     # A failed board must not stop the rest from being converted; remember
     # the failure and report it once everything that could be done is done.
@@ -382,11 +400,12 @@ def export(
             headed=headed,
             vault_dir=vault_dir,
             vault_prefix=vault_prefix,
+            formats=formats,
         )
     except SystemExit as e:
         exit_code = int(e.code or 0)
     if vault_dir is None:
-        ctx.invoke(convert, dump_path=None, all_space=space, force=force)
+        ctx.invoke(convert, dump_path=None, all_space=space, force=force, formats=formats)
     if exit_code:
         sys.exit(exit_code)
 

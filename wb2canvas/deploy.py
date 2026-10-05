@@ -9,10 +9,11 @@ from pathlib import Path
 
 from .board import Board, load_board
 from .canvas import render_canvas
+from .html import render_html
 from .storage import atomic_write_text
 from .svg import render_svg
 
-FORMATS: dict[str, str] = {"canvas": ".canvas", "svg": ".svg"}
+FORMATS: dict[str, str] = {"canvas": ".canvas", "svg": ".svg", "html": ".html"}
 
 
 @dataclass(frozen=True)
@@ -34,9 +35,9 @@ def render(
     if fmt == "canvas":
         doc = render_canvas(board, vault_prefix=vault_prefix, resolve_collisions=collision_fix)
         return doc.to_json(), f"{len(doc.nodes)} nodes, {len(doc.edges)} edges"
-    if fmt == "svg":
-        svg = render_svg(board, shape_map=shape_map)
-        return svg, f"{len(svg) // 1024} KB"
+    if fmt in ("svg", "html"):
+        out = (render_svg if fmt == "svg" else render_html)(board, shape_map=shape_map)
+        return out, f"{len(out) // 1024} KB"
     raise ValueError(f"unknown format {fmt!r}; expected one of {', '.join(FORMATS)}")
 
 

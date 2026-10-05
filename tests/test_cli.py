@@ -44,13 +44,22 @@ def test_vault_deploy_canvas_file_paths_resolve_from_vault_root(tmp_path: Path, 
         assert (vault / f).is_file(), f"Obsidian resolves {f!r} from the vault root"
 
 
-def test_vault_deploy_svg_image_hrefs_resolve_from_svg_location(tmp_path: Path, extracted: Path) -> None:
-    vault = _deploy(tmp_path, extracted, "svg")
-    svg_path = vault / "Whiteboards/Sample Board/1000001.svg"
-    hrefs = re.findall(r'<image [^>]*href="([^"]+)"', svg_path.read_text())
+@pytest.mark.parametrize("fmt", ["svg", "html"])
+def test_vault_deploy_image_hrefs_resolve_from_the_output_file(tmp_path: Path, extracted: Path, fmt: str) -> None:
+    vault = _deploy(tmp_path, extracted, fmt)
+    out = vault / f"Whiteboards/Sample Board/1000001.{fmt}"
+    hrefs = re.findall(r'<image [^>]*href="([^"]+)"', out.read_text())
     assert hrefs, "fixture has an image"
     for h in hrefs:
-        assert (svg_path.parent / h).is_file(), f"SVG resolves {h!r} relative to the SVG file"
+        assert (out.parent / h).is_file(), f"{fmt} resolves {h!r} relative to its own file"
+
+
+def test_several_formats_in_one_run(tmp_path: Path, extracted: Path) -> None:
+    result = CliRunner().invoke(
+        main, ["--out", str(tmp_path / "out"), "convert", str(extracted), "-f", "canvas", "-f", "svg", "-f", "html"],
+    )
+    assert result.exit_code == 0, result.output
+    assert sorted(p.suffix for p in extracted.parent.glob("1000001.*")) == [".canvas", ".html", ".svg"]
 
 
 def test_shape_map_rejects_unknown_stereotype(tmp_path: Path, extracted: Path) -> None:
