@@ -8,7 +8,7 @@ Three decoupled modules connected by JSON files on disk:
 discover.py  → _boards.json   →  extract.py  → dump.json + media/  →  convert.py → <board>.canvas
 ```
 
-- **discover** — REST (Confluence v2 + `atlassian-python-api`) lists whiteboards in a space.
+- **discover** — Confluence REST API lists whiteboards in a space.
 - **extract** — Playwright headless browser opens each board, reads the live Yjs Doc via the page's own clipboard contract (`data-canvas-clipboard`), downloads embedded images.
 - **convert** — pure offline mapping from the extractor's dump to the JSON Canvas spec.
 
@@ -44,13 +44,11 @@ uv run wb2canvas extract 1000001
 uv run wb2canvas convert out/<spaceKey>/1000001/dump.json
 ```
 
-### Why `auth attach` (not `auth login`)?
+### Why `auth attach`?
 
 Atlassian instances that federate to providers like GoDaddy, Okta, etc. run aggressive bot detection during the SSO step. A Playwright-driven browser, even with `channel="chrome"` and stealth tweaks, frequently gets flagged ("Your browser is a bit unusual…").
 
 `auth attach` sidesteps this: it launches your **real Google Chrome** with `--remote-debugging-port=9222` and an isolated profile, navigates to Atlassian, and waits for you to log in as a human. After you press Enter, it connects via CDP (Chrome DevTools Protocol) to the running browser and snapshots cookies/localStorage to `storage_state.json`. The IDP only ever sees a regular human-driven Chrome session — no automation fingerprints to detect.
-
-`auth login` (Playwright-driven, headed) is kept as a fallback for tenants without bot detection.
 
 End-to-end against a whole space:
 

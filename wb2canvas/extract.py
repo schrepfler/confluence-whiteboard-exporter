@@ -42,75 +42,6 @@ _MIME_EXT = {
 }
 
 
-_STEALTH_INIT = """
-(() => {
-  // navigator.webdriver
-  Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-
-  // window.chrome
-  if (!window.chrome) {
-    window.chrome = {
-      runtime: {},
-      loadTimes: function () { return {}; },
-      csi: function () { return {}; },
-      app: { isInstalled: false },
-    };
-  }
-
-  // languages
-  Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-
-  // plugins (length > 0 — bot detectors check for empty)
-  Object.defineProperty(navigator, 'plugins', {
-    get: () => [
-      { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-      { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
-      { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
-    ],
-  });
-
-  // permissions.query: avoid the 'Notification.permission denied / prompt mismatch' tell
-  if (navigator.permissions && navigator.permissions.query) {
-    const orig = navigator.permissions.query.bind(navigator.permissions);
-    navigator.permissions.query = (params) =>
-      params && params.name === 'notifications'
-        ? Promise.resolve({ state: Notification.permission, onchange: null })
-        : orig(params);
-  }
-
-  // WebGL vendor / renderer
-  const wp = WebGLRenderingContext && WebGLRenderingContext.prototype;
-  if (wp) {
-    const orig = wp.getParameter;
-    wp.getParameter = function (p) {
-      if (p === 37445) return 'Intel Inc.';
-      if (p === 37446) return 'Intel Iris OpenGL Engine';
-      return orig.apply(this, arguments);
-    };
-  }
-
-  // hairline / image fingerprinting smoothing
-  const proto = HTMLCanvasElement.prototype;
-  const orig = proto.toDataURL;
-  proto.toDataURL = function () { return orig.apply(this, arguments); };
-})();
-"""
-
-_STEALTH_ARGS = [
-    "--disable-blink-features=AutomationControlled",
-    "--disable-features=IsolateOrigins,site-per-process,AutomationControlled",
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--disable-infobars",
-    "--password-store=basic",
-]
-
-_REAL_UA = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-)
-
-
 def _find_chrome_binary() -> str | None:
     """Locate a real Google Chrome executable on this system."""
     candidates = []
@@ -198,42 +129,6 @@ async def login_attach(
     if not keep_chrome:
         proc.terminate()
     print(f"saved {state_path}")
-
-
-async def login_interactive(state_path: Path, base_url: str | None = None) -> None:
-    ensure_dir(state_path.parent)
-    async with async_playwright() as p:
-        try:
-            browser = await p.chromium.launch(
-                channel="chrome",
-                headless=False,
-                args=_STEALTH_ARGS,
-            )
-            using = "google-chrome"
-        except Exception:
-            browser = await p.chromium.launch(
-                headless=False,
-                args=_STEALTH_ARGS,
-            )
-            using = "bundled chromium (chrome channel unavailable)"
-        print(f"launched: {using}", flush=True)
-
-        context = await browser.new_context(
-            user_agent=_REAL_UA,
-            viewport={"width": 1366, "height": 900},
-        )
-        await context.add_init_script(_STEALTH_INIT)
-
-        page = await context.new_page()
-        target = base_url or "https://id.atlassian.com/login"
-        await page.goto(target)
-        print("\nLog in to Atlassian in the opened browser.")
-        print("When done, return here and press <Enter> to save the session…", flush=True)
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, sys.stdin.readline)
-        state = await context.storage_state()
-        atomic_write_text(state_path, json.dumps(state, indent=2), mode=0o600)
-        await browser.close()
 
 
 async def extract_board(

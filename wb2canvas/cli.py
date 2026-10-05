@@ -59,21 +59,6 @@ def auth() -> None:
     """Manage browser session for the extractor."""
 
 
-@auth.command("login")
-@click.pass_context
-def auth_login(ctx: click.Context) -> None:
-    """[fallback] Open a Playwright-driven browser to log in."""
-    import asyncio as _asyncio
-
-    from .extract import login_interactive
-    from .storage import storage_state_path
-
-    state_path = storage_state_path()
-    base_url = ctx.obj.get("base_url")
-    _asyncio.run(login_interactive(state_path, base_url=base_url))
-    click.echo(f"saved {state_path}")
-
-
 @auth.command("attach")
 @click.option("--port", default=9222, show_default=True, help="Chrome remote debug port.")
 @click.option(
@@ -83,7 +68,12 @@ def auth_login(ctx: click.Context) -> None:
 )
 @click.pass_context
 def auth_attach(ctx: click.Context, port: int, close_after: bool) -> None:
-    """Recommended: launch your real Chrome with debug port, log in, save session."""
+    """Log in through your own Chrome and save the session for extraction.
+
+    Launches Google Chrome with a remote-debugging port and a private profile.
+    You sign in as a human (SSO bot detection never sees automation); on
+    <Enter> the session cookies are captured over CDP.
+    """
     import asyncio as _asyncio
 
     from .extract import login_attach
