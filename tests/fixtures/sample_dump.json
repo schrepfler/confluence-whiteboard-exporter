@@ -1,0 +1,79 @@
+{
+  "dump_version": 1,
+  "board": {
+    "boardId": "1000001",
+    "contentId": "1000001",
+    "title": "Sample Board",
+    "spaceKey": "TEST",
+    "parentId": null,
+    "parentType": null,
+    "ownerId": "user-1",
+    "createdAt": "2026-01-01T00:00:00Z"
+  },
+  "strategy": "clipboard",
+  "elements": [
+    {
+      "type": "shape",
+      "source": 1,
+      "position": {"x": 0, "y": 0, "type": "Vector2"},
+      "size": {"x": 160, "y": 160, "type": "Vector2"},
+      "color": {"x": 254, "y": 193, "z": 118, "type": "Vector3"},
+      "strokeColor": {"x": 151, "y": 79, "z": 12, "type": "Vector3"},
+      "strokeStyle": 2,
+      "text": "{\"version\":1,\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Service A\",\"marks\":[{\"type\":\"strong\"}]}]}]}",
+      "shape": 3,
+      "fillEnabled": false,
+      "fontScale": 1,
+      "basisSize": {"x": 194.18, "y": 110.29, "type": "Vector2"},
+      "basisPosition": {"x": 0, "y": 0, "type": "Vector2"},
+      "alignment": "center",
+      "verticalAlignment": 1,
+      "rotation": 0
+    },
+    {
+      "type": "text",
+      "position": {"x": 200, "y": 50, "type": "Vector2"},
+      "size": {"x": 120, "y": 32, "type": "Vector2"},
+      "color": {"x": 0, "y": 0, "z": 0, "type": "Vector3"},
+      "text": "{\"version\":1,\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Service B\"}]}]}",
+      "fontScale": 1
+    },
+    {
+      "type": "image",
+      "source": 1,
+      "position": {"x": 400, "y": 0, "type": "Vector2"},
+      "size": {"x": 256, "y": 192, "type": "Vector2"},
+      "nativeSize": {"x": 5712, "y": 4284, "type": "Vector2"},
+      "fileId": "3326b2e5-07e9-49ce-9b79-36a2d5a986fe",
+      "imageDataIndex": 0,
+      "mimeType": "image/jpeg",
+      "imageHash": "fa91ac4a4d5e7ac4ab491266b879a4243d967d54548cc9103a35ba3d157e5a0a",
+      "isTransparent": false
+    },
+    {
+      "type": "connector",
+      "source": 1,
+      "position": {"x": 0, "y": 0, "type": "Vector2"},
+      "size": {"x": 0, "y": 0, "type": "Vector2"},
+      "color": {"x": 0, "y": 0, "z": 0, "type": "Vector3"},
+      "strokeStyle": 1,
+      "presentation": 3,
+      "segments": [],
+      "start": [0, 0],
+      "end": [200, 50],
+      "sourceElement": "shape-A",
+      "targetElement": "text-B",
+      "sourceAnchor": {"left": 1, "top": 0.5},
+      "targetAnchor": {"left": 0, "top": 0.5},
+      "startCap": 1,
+      "endCap": 2,
+      "stroke": 1,
+      "sourceIndex": 0,
+      "targetIndex": 1
+    }
+  ],
+  "fiber_dump": null,
+  "media": {
+    "3326b2e5-07e9-49ce-9b79-36a2d5a986fe": "media/3326b2e5-07e9-49ce-9b79-36a2d5a986fe.jpeg"
+  }
+}
