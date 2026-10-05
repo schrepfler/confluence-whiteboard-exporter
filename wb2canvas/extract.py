@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any, Literal
 
@@ -20,7 +18,7 @@ from playwright.async_api import (
 )
 
 from .model import BoardMeta, ClipboardElement, DumpFile, FiberDump
-from .storage import board_dir, dump_path, ensure_dir, media_dir
+from .storage import atomic_write_text, chrome_profile_dir, dump_path, ensure_dir, media_dir
 
 
 Strategy = Literal["clipboard", "fiber", "auto"]
@@ -137,10 +135,11 @@ def _find_chrome_binary() -> str | None:
     return None
 
 
-def _attach_profile_dir() -> Path:
-    p = Path(tempfile.gettempdir()) / "wb2canvas-chrome-profile"
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+class SessionExpiredError(RuntimeError):
+    """The saved browser session no longer authenticates."""
+
+
+LOGIN_HOSTS = ("id.atlassian.com", "auth.atlassian.com")
 
 
 async def login_attach(
@@ -156,7 +155,7 @@ async def login_attach(
             "or pass --port to attach to an already-running debug-enabled Chrome."
         )
 
-    profile_dir = _attach_profile_dir()
+    profile_dir = chrome_profile_dir()
     target = base_url or "https://id.atlassian.com/login"
 
     print(f"launching real Chrome ({chrome}) on debug port {port}")
@@ -192,15 +191,9 @@ async def login_attach(
             await browser.close()
             raise RuntimeError("Chrome has no open contexts; open a tab first.")
 
-        ensure_dir(state_path.parent)
         state = await contexts[0].storage_state()
-        state_path.write_text(json.dumps(state, indent=2))
+        atomic_write_text(state_path, json.dumps(state, indent=2), mode=0o600)
         await browser.close()
-
-    try:
-        os.chmod(state_path, 0o600)
-    except OSError:
-        pass
 
     if not keep_chrome:
         proc.terminate()
@@ -238,12 +231,9 @@ async def login_interactive(state_path: Path, base_url: str | None = None) -> No
         print("When done, return here and press <Enter> to save the session…", flush=True)
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, sys.stdin.readline)
-        await context.storage_state(path=str(state_path))
+        state = await context.storage_state()
+        atomic_write_text(state_path, json.dumps(state, indent=2), mode=0o600)
         await browser.close()
-    try:
-        os.chmod(state_path, 0o600)
-    except OSError:
-        pass
 
 
 async def extract_board(
@@ -265,6 +255,12 @@ async def extract_board(
         target_media = ensure_dir(media_dir(out_dir, space_key, board_id))
 
     media_map: dict[str, str] = {}
+    pending_media: set[asyncio.Task[None]] = set()
+
+    def on_response(r: Response) -> None:
+        task = asyncio.create_task(_capture_media(r, target_media, media_map))  # type: ignore[arg-type]
+        pending_media.add(task)
+        task.add_done_callback(pending_media.discard)
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=headless)
@@ -275,15 +271,13 @@ async def extract_board(
         page = await context.new_page()
 
         if download_media and target_media is not None:
-            page.on(
-                "response",
-                lambda r: asyncio.create_task(_capture_media(r, target_media, media_map)),
-            )
+            page.on("response", on_response)
 
         url = WHITEBOARD_URL.format(
             base=base_url.rstrip("/"), space=space_key, board=board_id
         )
         await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+        _raise_if_login_page(page.url)
 
         frame = await _wait_for_canvas_frame(page, timeout_ms=timeout_ms)
         await frame.evaluate(_PROBE_JS)
@@ -311,7 +305,10 @@ async def extract_board(
                 fiber_dump = await _extract_via_fiber(frame)
                 used = "fiber"
 
-        await asyncio.sleep(0.5)
+        # Media bodies are still streaming in; closing first would truncate or
+        # drop them (large images were silently lost before).
+        if pending_media:
+            await asyncio.wait(set(pending_media), timeout=60)
         await browser.close()
 
     dump = DumpFile(
@@ -322,10 +319,16 @@ async def extract_board(
         fiber_dump=fiber_dump,
         media=media_map,
     )
-    target_dump.write_text(
-        json.dumps(dump.model_dump(exclude_none=True), indent=2)
-    )
+    atomic_write_text(target_dump, json.dumps(dump.model_dump(exclude_none=True), indent=2))
     return dump
+
+
+def _raise_if_login_page(url: str) -> None:
+    if any(host in url for host in LOGIN_HOSTS):
+        raise SessionExpiredError(
+            "the saved Atlassian session was rejected (redirected to login); "
+            "run `wb2canvas auth attach` to refresh it"
+        )
 
 
 async def _wait_for_canvas_frame(page: Page, timeout_ms: int) -> Frame:
@@ -338,6 +341,7 @@ async def _wait_for_canvas_frame(page: Page, timeout_ms: int) -> Frame:
                 except PlaywrightTimeoutError:
                     pass
                 return fr
+        _raise_if_login_page(page.url)
         await asyncio.sleep(0.25)
     raise TimeoutError(f"Whiteboard iframe ({FRAME_PATH_FRAGMENT}) did not appear")
 

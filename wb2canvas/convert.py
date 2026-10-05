@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 import struct
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .adf import adf_to_markdown
+from .storage import atomic_write_text
 from .model import (
     Anchor,
     CanvasDoc,
@@ -23,9 +27,10 @@ CAP_NONE = 1
 CAP_ARROW = 2
 
 
-# Obsidian's JSON Canvas preset color palette ("1"-"6").
-# Snapping to these makes the canvas render in theme-aware accent colors
-# instead of raw hex (which Obsidian renders as muted background tints).
+# Obsidian's JSON Canvas preset color palette ("1"-"6"). Snapping to a preset
+# lets the theme restyle the node (e.g. in dark mode); exact hex is kept when
+# no preset is close. These RGB anchors are coarse stand-ins for the themed
+# colours, used only to decide which preset is nearest.
 _PRESETS = {
     "1": (0xFF, 0x00, 0x00),  # red
     "2": (0xFF, 0xA5, 0x00),  # orange
@@ -85,8 +90,7 @@ def push_apart(
     Mutates `nodes` in place; returns the number of iterations actually run.
 
     Nodes whose original (x, y) falls within `stack_threshold` of another
-    node's are treated as an intentional stack (legend swatches, label
-    clusters) and left alone — Atlassian authors deliberately overlap them.
+    node's are assumed to be a deliberate overlay and are not separated.
     """
     n = len(nodes)
     if n < 2:
@@ -156,7 +160,7 @@ def fiber_dump_to_canvas(
 
     z_order = list(fd.zindex) if fd.zindex else list(fd.board.keys())
     seen = set(z_order)
-    for k in fd.board.keys():
+    for k in fd.board:
         if k not in seen:
             z_order.append(k)
 
@@ -281,7 +285,7 @@ def convert_file(
     dump = DumpFile.model_validate_json(dump_path.read_text())
     doc = dump_to_canvas(dump, vault_prefix=vault_prefix, resolve_collisions=resolve_collisions)
     canvas_path = canvas_path or dump_path.with_name(f"{dump.board.boardId}.canvas")
-    canvas_path.write_text(json.dumps(doc.model_dump(exclude_none=True), indent=2))
+    atomic_write_text(canvas_path, json.dumps(doc.model_dump(exclude_none=True), indent=2))
     return canvas_path, doc
 
 
@@ -311,38 +315,100 @@ def _nearest_preset(r: int, g: int, b: int) -> str | None:
     return best[1]
 
 
-_CHAR_W = 7.5   # heuristic px-per-character at Obsidian's default text size
-_LINE_H = 22    # heuristic px-per-line
-_PADDING_W = 32
-_PADDING_H = 36
+@dataclass(frozen=True)
+class TextMetrics:
+    """Rough text layout model for one renderer; used only to size boxes."""
+
+    char_w: float  # average glyph advance, px
+    line_h: float  # line height, px
+    pad_w: float  # total horizontal padding inside a node, px
+    pad_h: float  # total vertical padding inside a node, px
+    para_gap: float  # extra height per blank line, in lines
 
 
-def _text_required_bounds(markdown: str | None) -> tuple[float, float]:
-    if not markdown:
-        return 0.0, 0.0
-    lines = markdown.splitlines() or [""]
-    longest = max(len(line) for line in lines)
-    return longest * _CHAR_W + _PADDING_W, len(lines) * _LINE_H + _PADDING_H
+# Obsidian canvas cards render ~16px text with generous card padding.
+CANVAS_METRICS = TextMetrics(char_w=7.5, line_h=22.0, pad_w=32.0, pad_h=36.0, para_gap=0.5)
+# The SVG renders 13px system text at line-height 1.35 with 8/12px padding.
+SVG_METRICS = TextMetrics(char_w=6.6, line_h=17.6, pad_w=24.0, pad_h=16.0, para_gap=0.15)
+
+_LIST_PREFIX = re.compile(r"^\s*(?:[-*+]|\d+\.)\s+")
+_MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_MD_MARKS = re.compile(r"(\*\*|\*|`|~~)")
 
 
-def rendered_bounds(elem: ClipboardElement, markdown: str | None = None) -> tuple[float, float, float, float]:
-    """Float bounds matching what the source application actually rendered:
-    anchor at stated position; width/height = max of stated size, basisSize,
-    and a conservative text-fit estimate. Used by both the JSON Canvas
-    converter and the SVG renderer so connector anchors align with edges."""
+def _plain(line: str) -> tuple[str, bool]:
+    """Visible text of a markdown line, and whether it is a list item."""
+    is_item = bool(_LIST_PREFIX.match(line))
+    text = _LIST_PREFIX.sub("", line)
+    text = _MD_LINK.sub(r"\1", text)
+    return _MD_MARKS.sub("", text).strip(), is_item
+
+
+def _unwrapped_bounds(markdown: str, m: TextMetrics) -> tuple[float, float]:
+    """Size of text that never wraps (auto-width free text)."""
+    width, lines = 0.0, 0.0
+    for raw in markdown.splitlines():
+        text, is_item = _plain(raw)
+        if not text:
+            lines += m.para_gap
+            continue
+        width = max(width, (len(text) + (3 if is_item else 0)) * m.char_w)
+        lines += 1
+    return width + m.pad_w, lines * m.line_h + m.pad_h
+
+
+def _wrapped_height(markdown: str, width: float, m: TextMetrics) -> float:
+    """Height of text word-wrapped to `width`."""
+    usable = max(m.char_w * 4, width - m.pad_w)
+    lines = 0.0
+    for raw in markdown.splitlines():
+        text, is_item = _plain(raw)
+        if not text:
+            lines += m.para_gap
+            continue
+        avail = usable - (3 * m.char_w if is_item else 0)
+        per_line = max(1, int(avail // m.char_w))
+        lines += max(1, math.ceil(len(text) / per_line))
+    return lines * m.line_h + m.pad_h
+
+
+def rendered_bounds(
+    elem: ClipboardElement,
+    markdown: str | None = None,
+    metrics: TextMetrics = CANVAS_METRICS,
+) -> tuple[float, float, float, float]:
+    """The box the source application actually draws for an element.
+
+    Shapes are drawn at basisPosition/basisSize. Their `size` is not usable:
+    on a sample board every shape stores the same 160x160 default, while
+    basisSize widths match the drawn widths to within a few px. Text is
+    wrapped at that width, and only the height may grow, because the target
+    renderer's font can be larger than Confluence's.
+
+    Free text (type "text") is the reverse: its basisSize is a placeholder and
+    the text auto-widens, so the box comes from the content.
+    """
     if not elem.position:
         return 0.0, 0.0, 0.0, 0.0
-    px, py = elem.position.x, elem.position.y
-    sw = elem.size.x if elem.size else 0.0
-    sh = elem.size.y if elem.size else 0.0
-    if elem.basisSize:
-        sw = max(sw, elem.basisSize.x)
-        sh = max(sh, elem.basisSize.y)
-    if markdown:
-        text_w, text_h = _text_required_bounds(markdown)
-        sw = max(sw, text_w)
-        sh = max(sh, text_h)
-    return px, py, sw, sh
+    if elem.type == "text":
+        x, y = elem.position.x, elem.position.y
+        w = elem.size.x if elem.size else 0.0
+        h = elem.size.y if elem.size else 0.0
+        if markdown:
+            tw, th = _unwrapped_bounds(markdown, metrics)
+            w, h = max(w, tw), max(h, th)
+        return x, y, w, h
+
+    if elem.basisSize and elem.basisSize.x > 0 and elem.basisSize.y > 0:
+        origin = elem.basisPosition or elem.position
+        x, y, w, h = origin.x, origin.y, elem.basisSize.x, elem.basisSize.y
+    else:
+        x, y = elem.position.x, elem.position.y
+        w = elem.size.x if elem.size else 0.0
+        h = elem.size.y if elem.size else 0.0
+    if markdown and w > 0:
+        h = max(h, _wrapped_height(markdown, w, metrics))
+    return x, y, w, h
 
 
 def _xywh(elem: ClipboardElement, markdown: str | None = None) -> tuple[int, int, int, int]:

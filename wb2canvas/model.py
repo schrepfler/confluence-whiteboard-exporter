@@ -64,6 +64,8 @@ class ClipboardElement(BaseModel):
     alignment: str | None = None
     verticalAlignment: int | None = None
     rotation: float | None = None
+    # Free-floating text elements: size is a placeholder, the text auto-widens.
+    allowFlexibleWidth: bool | None = None
 
     sourceElement: str | None = None
     sourceAnchor: Anchor | None = None

@@ -26,7 +26,7 @@ def _render_node(node: dict[str, Any]) -> str:
     if t == "paragraph":
         return "".join(_render_node(c) for c in children)
     if t == "heading":
-        level = int(node.get("attrs", {}).get("level", 1))
+        level = _heading_level(node)
         return "#" * level + " " + "".join(_render_node(c) for c in children)
     if t == "text":
         text = node.get("text", "")
@@ -49,6 +49,31 @@ def _render_node(node: dict[str, Any]) -> str:
     return "".join(_render_node(c) for c in children if isinstance(c, dict))
 
 
+_SAFE_SCHEMES = ("http", "https", "mailto")
+
+
+def safe_href(href: str) -> str | None:
+    """Return href if its scheme is allowlisted, else None.
+
+    Link targets come from board content that anyone with edit access can
+    author, and the SVG output executes script, so a `javascript:` link
+    would run in the viewer's browser when clicked.
+    """
+    if not isinstance(href, str):
+        return None
+    scheme, sep, _ = href.strip().partition(":")
+    if sep and scheme.lower() in _SAFE_SCHEMES:
+        return href.strip()
+    return None
+
+
+def _heading_level(node: dict[str, Any]) -> int:
+    try:
+        return max(1, min(6, int((node.get("attrs") or {}).get("level", 1))))
+    except (TypeError, ValueError):
+        return 1
+
+
 def _apply_marks(text: str, marks: list[dict[str, Any]]) -> str:
     for m in marks:
         mt = m.get("type")
@@ -61,8 +86,9 @@ def _apply_marks(text: str, marks: list[dict[str, Any]]) -> str:
         elif mt == "strike":
             text = f"~~{text}~~"
         elif mt == "link":
-            href = m.get("attrs", {}).get("href", "")
-            text = f"[{text}]({href})"
+            href = safe_href(m.get("attrs", {}).get("href", ""))
+            if href:
+                text = f"[{text}]({href})"
     return text
 
 
@@ -89,7 +115,7 @@ def _render_node_html(node: dict[str, Any]) -> str:
         body = "".join(_render_node_html(c) for c in children)
         return f"<p>{body}</p>"
     if t == "heading":
-        level = max(1, min(6, int(node.get("attrs", {}).get("level", 1))))
+        level = _heading_level(node)
         body = "".join(_render_node_html(c) for c in children)
         return f"<h{level}>{body}</h{level}>"
     if t == "text":
@@ -123,8 +149,9 @@ def _apply_marks_html(text: str, marks: list[dict[str, Any]]) -> str:
         elif mt == "strike":
             text = f"<s>{text}</s>"
         elif mt == "link":
-            href = _xml_escape(m.get("attrs", {}).get("href", ""))
-            text = f'<a href="{href}">{text}</a>'
+            href = safe_href(m.get("attrs", {}).get("href", ""))
+            if href:
+                text = f'<a href="{_xml_escape(href)}">{text}</a>'
     return text
 
 

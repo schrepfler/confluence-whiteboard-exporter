@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
-from platformdirs import user_config_dir
+from platformdirs import user_cache_dir, user_config_dir
 
 
 def storage_state_path() -> Path:
     return Path(user_config_dir("wb2canvas")) / "storage_state.json"
+
+
+def chrome_profile_dir() -> Path:
+    """Private, persistent profile for `auth attach`. Kept out of the shared
+    system temp dir so other local users cannot pre-create or read it."""
+    p = Path(user_cache_dir("wb2canvas")) / "chrome-profile"
+    p.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(p, 0o700)
+    return p
 
 
 def boards_index_path(out_dir: Path, space_key: str) -> Path:
@@ -32,3 +43,25 @@ def media_dir(out_dir: Path, space_key: str, board_id: str) -> Path:
 def ensure_dir(p: Path) -> Path:
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def atomic_write_text(path: Path, text: str, mode: int = 0o644) -> None:
+    """Write via a temp file in the same directory, then rename into place.
+
+    A crash mid-write never leaves a truncated file behind — important because
+    the extractor skips any board whose dump already exists. The temp file is
+    created with `mode` from the start (mkstemp uses 0600), so secrets such as
+    session cookies are never briefly world-readable.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise

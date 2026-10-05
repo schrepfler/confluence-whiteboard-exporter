@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-wb2canvas = "wb2canvas.cli:main"
+wb2canvas = "wb2canvas.cli:run"
 
 [dependency-groups]
 dev = [

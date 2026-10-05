@@ -3,12 +3,25 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
+
+if TYPE_CHECKING:
+    from .model import DumpFile
 
 
-load_dotenv(override=False)
+def run() -> None:
+    """Console-script entry point.
+
+    `.env` is loaded here rather than at import time so importing this module
+    (e.g. from tests) never pulls real credentials into the process, and it is
+    searched from the current directory rather than from wherever the package
+    happens to be installed.
+    """
+    load_dotenv(find_dotenv(usecwd=True), override=False)
+    main()
 
 
 def _env(name: str) -> str | None:
@@ -176,7 +189,7 @@ def extract(
     if not state_path.exists():
         click.echo(
             f"ERROR: no saved browser session at {state_path}. "
-            "Run `wb2canvas auth login` first.",
+            "Run `wb2canvas auth attach` first.",
             err=True,
         )
         sys.exit(2)
@@ -207,6 +220,7 @@ def extract(
         boards = [get_whiteboard(base_url, email, token, board_id)]  # type: ignore[arg-type]
 
     headless = not headed
+    failed: list[str] = []
     for b in boards:
         target = dump_path(out_dir, b.spaceKey, b.boardId)
         if target.exists() and not force:
@@ -227,6 +241,7 @@ def extract(
                 )
             except Exception as e:
                 click.echo(f"  FAILED: {e}", err=True)
+                failed.append(b.boardId)
                 continue
             click.echo(
                 f"  wrote {target} (strategy={dump.strategy}, "
@@ -242,6 +257,10 @@ def extract(
                 vault_dir=vault_dir,
                 vault_prefix=vault_prefix,
             )
+
+    if failed:
+        click.echo(f"{len(failed)} of {len(boards)} board(s) failed: {', '.join(failed)}", err=True)
+        sys.exit(1)
 
 
 @main.command()
@@ -299,9 +318,7 @@ def convert(
     """Convert a dump.json to JSON Canvas (default) or SVG."""
     import shutil as _shutil
 
-    from .convert import convert_file
     from .model import DumpFile
-    from .svg import dump_to_svg
 
     if not dump_path and not all_space:
         click.echo("ERROR: provide DUMP_PATH or --all SPACE", err=True)
@@ -322,26 +339,12 @@ def convert(
             sys.exit(2)
 
     ext = ".canvas" if fmt == "canvas" else ".svg"
+    shape_map_overrides = _parse_shape_map(shape_map_str) if shape_map_str else None
 
     for target in targets:
         dump = DumpFile.model_validate_json(target.read_text())
         board_id = dump.board.boardId
         prefix_clean = vault_prefix.strip("/")
-
-        shape_map_overrides = _parse_shape_map(shape_map_str) if shape_map_str else None
-
-        def _emit(out_path: Path) -> str:
-            if fmt == "canvas":
-                _, doc = convert_file(
-                    target,
-                    out_path,
-                    vault_prefix=prefix_clean,
-                    resolve_collisions=collision_fix,
-                )
-                return f"{len(doc.nodes)} nodes, {len(doc.edges)} edges"
-            svg = dump_to_svg(dump, vault_prefix=prefix_clean, shape_map=shape_map_overrides)
-            out_path.write_text(svg)
-            return f"{len(svg) // 1024} KB"
 
         if vault_dir is not None:
             dest_root = vault_dir / prefix_clean if prefix_clean else vault_dir
@@ -359,14 +362,14 @@ def convert(
                     if f.is_file():
                         _shutil.copy2(f, dest_media / f.name)
                         copied += 1
-            stats = _emit(dest_path)
+            stats = _write_output(fmt, dump, target, dest_path, prefix_clean, collision_fix, shape_map_overrides)
             click.echo(f"deployed → {dest_path}  ({stats}, {copied} media files)")
         else:
             out_path = target.with_name(f"{board_id}{ext}")
             if out_path.exists() and not force:
                 click.echo(f"skip  {out_path} (exists; use --force)")
                 continue
-            stats = _emit(out_path)
+            stats = _write_output(fmt, dump, target, out_path, prefix_clean, collision_fix, shape_map_overrides)
             click.echo(f"wrote {out_path}  ({stats})")
 
 
@@ -399,23 +402,62 @@ def export(
 ) -> None:
     """End-to-end: discover → extract → convert every whiteboard in a space."""
     ctx.invoke(discover, space=space, method=method)
-    ctx.invoke(
-        extract,
-        board_id=None,
-        space=space,
-        strategy=strategy,
-        force=force,
-        no_media=no_media,
-        headed=headed,
-        vault_dir=vault_dir,
-        vault_prefix=vault_prefix,
-    )
+    # A failed board must not stop the rest from being converted; remember
+    # the failure and report it once everything that could be done is done.
+    exit_code = 0
+    try:
+        ctx.invoke(
+            extract,
+            board_id=None,
+            space=space,
+            strategy=strategy,
+            force=force,
+            no_media=no_media,
+            headed=headed,
+            vault_dir=vault_dir,
+            vault_prefix=vault_prefix,
+        )
+    except SystemExit as e:
+        exit_code = int(e.code or 0)
     if vault_dir is None:
         ctx.invoke(convert, dump_path=None, all_space=space, force=force)
+    if exit_code:
+        sys.exit(exit_code)
+
+
+def _write_output(
+    fmt: str,
+    dump: DumpFile,
+    dump_path: Path,
+    out_path: Path,
+    vault_prefix: str,
+    collision_fix: bool,
+    shape_map: dict[int, str] | None,
+) -> str:
+    from .convert import convert_file
+    from .storage import atomic_write_text
+    from .svg import dump_to_svg
+
+    if fmt == "canvas":
+        _, doc = convert_file(dump_path, out_path, vault_prefix=vault_prefix, resolve_collisions=collision_fix)
+        return f"{len(doc.nodes)} nodes, {len(doc.edges)} edges"
+    if dump.strategy != "clipboard":
+        raise click.ClickException(
+            f"{dump_path}: SVG needs a clipboard-strategy dump (this one is {dump.strategy!r}); "
+            "re-extract with --strategy clipboard --force"
+        )
+    # SVG resolves image hrefs relative to the SVG file, so they stay `media/...`
+    # regardless of vault prefix (only JSON Canvas needs vault-root paths).
+    svg = dump_to_svg(dump, shape_map=shape_map)
+    atomic_write_text(out_path, svg)
+    return f"{len(svg) // 1024} KB"
 
 
 def _parse_shape_map(s: str) -> dict[int, str]:
     """Parse '4=ellipse,5=diamond' into {4: 'ellipse', 5: 'diamond'}."""
+    from .svg import STEREOTYPES
+
+    known = set(STEREOTYPES)
     out: dict[int, str] = {}
     for entry in s.split(","):
         entry = entry.strip()
@@ -425,11 +467,17 @@ def _parse_shape_map(s: str) -> dict[int, str]:
             raise click.BadParameter(f"--shape-map entry {entry!r} missing '=' (e.g. '4=ellipse')")
         k, _, v = entry.partition("=")
         try:
-            out[int(k.strip())] = v.strip()
+            kind = int(k.strip())
         except ValueError as e:
             raise click.BadParameter(f"--shape-map key {k!r} is not an integer") from e
+        name = v.strip()
+        if name not in known:
+            raise click.BadParameter(
+                f"--shape-map name {name!r} is unknown; choose from: {', '.join(sorted(known))}"
+            )
+        out[kind] = name
     return out
 
 
 if __name__ == "__main__":
-    main()
+    run()

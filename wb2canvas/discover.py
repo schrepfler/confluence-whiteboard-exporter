@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Iterator, Literal
-from urllib.parse import urlsplit
+from datetime import datetime, UTC
+from typing import Any, Literal
+from collections.abc import Iterator
+from urllib.parse import parse_qsl, urlsplit
 
 import httpx
 
@@ -21,7 +22,7 @@ def _coerce_timestamp(v: Any) -> str | None:
     if isinstance(v, (int, float)):
         seconds = v / 1000.0 if v > 1e12 else float(v)
         return (
-            datetime.fromtimestamp(seconds, tz=timezone.utc)
+            datetime.fromtimestamp(seconds, tz=UTC)
             .isoformat()
             .replace("+00:00", "Z")
         )
@@ -70,6 +71,11 @@ def get_whiteboard(
                 sr = client.get(f"/wiki/api/v2/spaces/{space_id}")
                 if sr.status_code == 200:
                     space_key = sr.json().get("key")
+        if not space_key:
+            raise ValueError(
+                f"could not resolve the space key for whiteboard {board_id}; "
+                "pass it explicitly"
+            )
         return _v2_to_board_meta(data, space_key)
 
 
@@ -89,33 +95,36 @@ def _iter_via_cql(client: httpx.Client, space_key: str) -> Iterator[BoardMeta]:
         next_path, next_params = _follow_next(data)
 
 
+_KIND_BY_TYPE = {"page": "pages", "folder": "folders", "whiteboard": "whiteboards"}
+
+
 def _iter_via_tree(client: httpx.Client, space_key: str) -> Iterator[BoardMeta]:
     space = _resolve_space(client, space_key)
     space_id = str(space["id"])
     home_id = space.get("homepageId")
 
     visited: set[tuple[str, str]] = set()
-    queue: list[tuple[str, str]] = []
+    yielded: set[str] = set()
+    queue: list[tuple[str, str, dict[str, Any]]] = []
     if home_id:
-        queue.append(("pages", str(home_id)))
+        queue.append(("pages", str(home_id), {}))
     queue.extend(_top_level_children(client, space_id))
 
     while queue:
-        kind, node_id = queue.pop()
-        key = (kind, node_id)
-        if key in visited:
+        kind, node_id, item = queue.pop()
+        if (kind, node_id) in visited:
             continue
-        visited.add(key)
+        visited.add((kind, node_id))
+        # Whiteboards are yielded where they are dequeued, not where they are
+        # discovered, so root-level boards (which never appear as a child of
+        # anything) are reported too, and boards reachable twice only once.
+        if kind == "whiteboards" and node_id not in yielded:
+            yielded.add(node_id)
+            yield _v2_to_board_meta({"id": node_id, **item}, space_key)
         for child in _direct_children(client, kind, node_id):
-            ctype = child.get("type") or ""
-            child_id = str(child.get("id"))
-            if ctype == "whiteboard":
-                yield _v2_to_board_meta(child, space_key)
-                queue.append(("whiteboards", child_id))
-            elif ctype == "page":
-                queue.append(("pages", child_id))
-            elif ctype == "folder":
-                queue.append(("folders", child_id))
+            child_kind = _KIND_BY_TYPE.get(child.get("type") or "")
+            if child_kind:
+                queue.append((child_kind, str(child.get("id")), child))
 
 
 def _resolve_space(client: httpx.Client, space_key: str) -> dict[str, Any]:
@@ -127,10 +136,12 @@ def _resolve_space(client: httpx.Client, space_key: str) -> dict[str, Any]:
     return results[0]
 
 
-def _top_level_children(client: httpx.Client, space_id: str) -> list[tuple[str, str]]:
-    out: list[tuple[str, str]] = []
-    for kind, plural in (("pages", "pages"), ("folders", "folders"), ("whiteboards", "whiteboards")):
-        next_path: str | None = f"/wiki/api/v2/spaces/{space_id}/{plural}"
+def _top_level_children(
+    client: httpx.Client, space_id: str
+) -> list[tuple[str, str, dict[str, Any]]]:
+    out: list[tuple[str, str, dict[str, Any]]] = []
+    for kind in ("pages", "folders", "whiteboards"):
+        next_path: str | None = f"/wiki/api/v2/spaces/{space_id}/{kind}"
         next_params: dict[str, Any] | None = {"limit": 250}
         while next_path:
             r = client.get(next_path, params=next_params)
@@ -141,7 +152,7 @@ def _top_level_children(client: httpx.Client, space_id: str) -> list[tuple[str, 
             for item in data.get("results", []):
                 if item.get("parentId"):
                     continue
-                out.append((plural, str(item["id"])))
+                out.append((kind, str(item["id"]), item))
             next_path, next_params = _follow_next(data)
     return out
 
@@ -160,23 +171,23 @@ def _direct_children(client: httpx.Client, kind: str, node_id: str) -> Iterator[
 
 
 def _follow_next(data: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
-    nxt = (data.get("_links") or {}).get("next")
+    """Resolve a `_links.next` cursor into (path, decoded params).
+
+    v2 returns `/wiki/api/v2/...`; v1 returns a path relative to the
+    `/wiki` context (`/rest/api/search?...`), so it must be re-prefixed.
+    Query values are percent-decoded here because httpx re-encodes them —
+    passing them through raw double-encodes base64 cursors (`%3D` → `%253D`).
+    """
+    links = data.get("_links") or {}
+    nxt = links.get("next")
     if not nxt:
         return None, None
     parts = urlsplit(nxt)
-    return parts.path, _parse_qs(parts.query)
-
-
-def _parse_qs(qs: str) -> dict[str, Any]:
-    if not qs:
-        return {}
-    out: dict[str, Any] = {}
-    for pair in qs.split("&"):
-        if not pair:
-            continue
-        k, _, v = pair.partition("=")
-        out[k] = v
-    return out
+    path = parts.path
+    context = (links.get("context") or "/wiki").rstrip("/")
+    if context and not path.startswith(context + "/"):
+        path = context + path
+    return path, dict(parse_qsl(parts.query, keep_blank_values=True))
 
 
 def _v1_to_board_meta(content: dict[str, Any], space_key: str) -> BoardMeta:

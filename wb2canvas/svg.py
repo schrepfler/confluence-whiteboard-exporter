@@ -9,10 +9,12 @@ Canvas 1.0 cannot represent.
 
 from __future__ import annotations
 
+import math
 from typing import Any
+from collections.abc import Callable
 
 from .adf import _xml_escape, adf_to_html, adf_to_markdown
-from .convert import _fix_mojibake, rendered_bounds
+from .convert import SVG_METRICS, _fix_mojibake, rendered_bounds
 from .model import ClipboardElement, DumpFile, Vector3
 
 
@@ -198,8 +200,6 @@ def _cloud_path(x: float, y: float, w: float, h: float) -> str:
 
 def _star_path(x: float, y: float, w: float, h: float) -> str:
     """Five-pointed star inscribed in the bbox."""
-    import math
-
     cx, cy = x + w / 2, y + h / 2
     rx, ry = w / 2, h / 2
     inner_x, inner_y = rx * 0.40, ry * 0.40
@@ -215,7 +215,7 @@ def _star_path(x: float, y: float, w: float, h: float) -> str:
 
 
 # Registry of stereotype-name → path-generator. Add new ones here.
-_PATH_GENERATORS: dict[str, callable] = {  # type: ignore[type-arg]
+_PATH_GENERATORS: dict[str, Callable[[float, float, float, float], str]] = {
     "cylinder": _cylinder_path,
     "ellipse": _ellipse_path,
     "diamond": _diamond_path,
@@ -230,6 +230,9 @@ _PATH_GENERATORS: dict[str, callable] = {  # type: ignore[type-arg]
     "cloud": _cloud_path,
     "star": _star_path,
 }
+
+
+STEREOTYPES: frozenset[str] = frozenset({"rect", *_PATH_GENERATORS})
 
 
 # Per-stereotype text inset (top, right, bottom, left in fractions of w/h)
@@ -289,61 +292,91 @@ def _shape_outline(
     return gen(x, y, w, h), name
 
 
-def dump_to_svg(
-    dump: DumpFile,
-    vault_prefix: str = "",
-    shape_map: dict[int, str] | None = None,
-) -> str:
-    smap = dict(DEFAULT_SHAPE_MAP)
-    if shape_map:
-        smap.update(shape_map)
-    bounds = _compute_bounds(dump)
-    if bounds is None:
-        return _empty_svg()
-    min_x, min_y, max_x, max_y = bounds
-    vb_x = int(min_x - MARGIN)
-    vb_y = int(min_y - MARGIN)
-    vb_w = int((max_x - min_x) + 2 * MARGIN)
-    vb_h = int((max_y - min_y) + 2 * MARGIN)
+Box = tuple[float, float, float, float]
 
-    parts: list[str] = []
-    parts.append(
-        f'<svg xmlns="http://www.w3.org/2000/svg" '
-        f'xmlns:xlink="http://www.w3.org/1999/xlink" '
-        f'viewBox="{vb_x} {vb_y} {vb_w} {vb_h}" '
-        f'width="{vb_w}" height="{vb_h}" '
-        f'font-family="-apple-system, BlinkMacSystemFont, sans-serif" '
-        f'font-size="13">'
-    )
-    parts.append(_defs())
-    parts.append(_style_block())
+_VALIGN = {0: "top", 1: "middle", 2: "bottom"}  # observed: shapes use 1 (middle)
+_HALIGN = {"left", "center", "right"}
+BASE_FONT_PX = 13.0
 
-    # z-order: paths first (background dividers), then images, then shapes/text,
-    # then connectors on top so arrows are visible.
+
+class _Bounds:
+    """Accumulates the extent of everything actually drawn, so the viewBox
+    matches rendered geometry rather than the source's placeholder sizes."""
+
+    def __init__(self) -> None:
+        self.x0 = self.y0 = math.inf
+        self.x1 = self.y1 = -math.inf
+
+    def point(self, x: float, y: float) -> None:
+        self.x0, self.y0 = min(self.x0, x), min(self.y0, y)
+        self.x1, self.y1 = max(self.x1, x), max(self.y1, y)
+
+    def box(self, x: float, y: float, w: float, h: float) -> None:
+        self.point(x, y)
+        self.point(x + w, y + h)
+
+    @property
+    def empty(self) -> bool:
+        return self.x0 == math.inf
+
+
+def dump_to_svg(dump: DumpFile, shape_map: dict[int, str] | None = None) -> str:
+    """Render a clipboard-strategy dump as SVG.
+
+    Image hrefs are relative to the SVG file itself (that is how SVG resolves
+    them), so the output must sit next to its `media/` directory.
+    """
+    smap = {**DEFAULT_SHAPE_MAP, **(shape_map or {})}
+    bounds = _Bounds()
+    boxes: dict[int, Box] = {}
+
+    # Nodes in source order (the clipboard array is z-ordered), connectors last
+    # so arrowheads stay visible above outlines.
+    node_parts: list[str] = []
     for idx, elem in enumerate(dump.elements):
-        if elem.type == "path":
-            s = _render_path(elem, idx)
-            if s:
-                parts.append(s)
-    for idx, elem in enumerate(dump.elements):
-        if elem.type == "image":
-            s = _render_image(elem, idx, dump, vault_prefix)
-            if s:
-                parts.append(s)
-    for idx, elem in enumerate(dump.elements):
-        if elem.type in ("shape", "text"):
-            s = _render_shape(elem, idx, smap)
-            if s:
-                parts.append(s)
+        if elem.type == "shape":
+            s = _render_shape(elem, idx, smap, boxes)
+        elif elem.type == "text":
+            s = _render_text(elem, idx, boxes)
+        elif elem.type == "image":
+            s = _render_image(elem, idx, dump, boxes)
+        elif elem.type == "path":
+            s = _render_path(elem, bounds)
+        else:
+            continue
+        if s:
+            node_parts.append(s)
+    for b in boxes.values():
+        bounds.box(*b)
+
+    edge_parts: list[str] = []
     for idx, elem in enumerate(dump.elements):
         if elem.type == "connector":
-            s = _render_connector(elem, idx, dump)
+            s = _render_connector(elem, idx, boxes, bounds)
             if s:
-                parts.append(s)
+                edge_parts.append(s)
 
-    parts.append(_interactive_script())
-    parts.append("</svg>")
-    return "\n".join(parts)
+    if bounds.empty:
+        return _empty_svg()
+    vb_x = math.floor(bounds.x0 - MARGIN)
+    vb_y = math.floor(bounds.y0 - MARGIN)
+    vb_w = math.ceil(bounds.x1 - bounds.x0 + 2 * MARGIN)
+    vb_h = math.ceil(bounds.y1 - bounds.y0 + 2 * MARGIN)
+
+    return "\n".join(
+        [
+            f'<svg xmlns="http://www.w3.org/2000/svg" '
+            f'viewBox="{vb_x} {vb_y} {vb_w} {vb_h}" width="{vb_w}" height="{vb_h}" '
+            f'font-family="-apple-system, BlinkMacSystemFont, \'Segoe UI\', sans-serif" '
+            f'font-size="{_fmt(BASE_FONT_PX)}">',
+            _defs(),
+            _style_block(),
+            *node_parts,
+            *edge_parts,
+            _interactive_script(),
+            "</svg>",
+        ]
+    )
 
 
 def _defs() -> str:
@@ -358,41 +391,64 @@ def _defs() -> str:
 
 
 def _style_block() -> str:
-    # Embedded CSS scoped to this SVG; tightens up foreignObject HTML rendering.
-    # height:100% + overflow:hidden + box-sizing:border-box make the inner div
-    # respect the foreignObject bounds so text doesn't spill outside the rect.
+    # .node-text fills its foreignObject and clips; .node-body is centred with
+    # auto margins, which (unlike justify-content:center) collapse to zero when
+    # content overflows, so overflow always grows downward and scrollHeight is
+    # measurable by the interactive auto-fit.
     return (
         "<style>"
-        ".node-text{"
-        "margin:0;padding:8px 12px;color:#172B4D;"
-        "font-size:13px;line-height:1.35;"
-        "height:100%;width:100%;box-sizing:border-box;overflow:hidden;"
-        "}"
-        ".node-text p{margin:0 0 2px 0;}"
-        ".node-text ul,.node-text ol{margin:1px 0 1px 14px;padding:0;}"
-        ".node-text li{margin:0;}"
-        ".node-text li>p{margin:0;}"
-        ".node-text strong{font-weight:600;}"
+        ".node-text{display:flex;flex-direction:column;margin:0;padding:8px 12px;"
+        "color:#172B4D;line-height:1.35;height:100%;width:100%;"
+        "box-sizing:border-box;overflow:hidden;}"
+        ".node-free{display:block;height:auto;width:auto;padding:0;overflow:visible;}"
+        ".node-body{margin:0;overflow-wrap:anywhere;}"
+        ".va-top{margin-bottom:auto;}"
+        ".va-middle{margin-top:auto;margin-bottom:auto;}"
+        ".va-bottom{margin-top:auto;}"
+        ".node-body p{margin:0 0 2px 0;}"
+        ".node-body ul,.node-body ol{margin:1px 0 1px 18px;padding:0;text-align:left;}"
+        ".node-body li{margin:0;}"
+        ".node-body li>p{margin:0;}"
+        ".node-body strong{font-weight:600;}"
         "</style>"
     )
 
 
-def _render_shape(elem: ClipboardElement, idx: int, shape_map: dict[int, str]) -> str:
+def _text_of(elem: ClipboardElement) -> tuple[str | None, str]:
+    """(markdown used for size estimation, HTML used for display)."""
+    if not elem.text:
+        return None, ""
+    raw = _fix_mojibake(elem.text) or elem.text
+    return adf_to_markdown(raw) or None, adf_to_html(raw)
+
+
+def _node_group(idx: int, box: Box, inner: str, extra_class: str = "") -> str:
+    x, y, w, h = box
+    cls = f"wb-node {extra_class}".strip()
+    return (
+        f'<g class="{cls}" data-idx="{idx}" '
+        f'data-x="{_fmt(x)}" data-y="{_fmt(y)}" data-w="{_fmt(w)}" data-h="{_fmt(h)}">'
+        f"{inner}</g>"
+    )
+
+
+def _render_shape(
+    elem: ClipboardElement, idx: int, shape_map: dict[int, str], boxes: dict[int, Box]
+) -> str:
     if not elem.position:
         return ""
-    md = _fix_mojibake(adf_to_markdown(elem.text)) if elem.text else None
-    x, y, w, h = rendered_bounds(elem, markdown=md)
+    md, text_html = _text_of(elem)
+    x, y, w, h = rendered_bounds(elem, markdown=md, metrics=SVG_METRICS)
     if w <= 0 or h <= 0:
         return ""
+    boxes[idx] = (x, y, w, h)
 
-    fill = _hex(elem.color) or DEFAULT_FILL if elem.fillEnabled else "transparent"
+    fill = (_hex(elem.color) or DEFAULT_FILL) if elem.fillEnabled else "transparent"
     stroke = _hex(elem.strokeColor) or _hex(elem.color) or DEFAULT_STROKE
     stroke_w = max(1.0, float(elem.stroke or 1)) * 1.5
     dash = _stroke_dash(elem.strokeStyle, stroke_w)
 
-    kind = elem.shape if elem.type == "shape" else None
-    d, name = _shape_outline(kind, x, y, w, h, shape_map)
-
+    d, name = _shape_outline(elem.shape, x, y, w, h, shape_map)
     if name == "rect":
         outline = (
             f'<rect x="{_fmt(x)}" y="{_fmt(y)}" width="{_fmt(w)}" height="{_fmt(h)}" '
@@ -405,108 +461,113 @@ def _render_shape(elem: ClipboardElement, idx: int, shape_map: dict[int, str]) -
             f'stroke-width="{_fmt(stroke_w)}" {dash}/>'
         )
 
+    body = ""
     top, right, bottom, left = _text_inset_px(name, w, h)
-    text_x = x + left
-    text_y = y + top
-    text_w = max(0.0, w - left - right)
-    text_h = max(0.0, h - top - bottom)
-
-    text_html = adf_to_html(_fix_mojibake(elem.text) if elem.text else None) if elem.type == "shape" or elem.text else ""
-    if text_html and text_w > 0 and text_h > 0:
+    tw, th = w - left - right, h - top - bottom
+    if text_html and tw > 0 and th > 0:
+        halign = elem.alignment if elem.alignment in _HALIGN else "center"
+        valign = _VALIGN.get(elem.verticalAlignment if elem.verticalAlignment is not None else 1, "middle")
         body = (
-            f'<foreignObject x="{_fmt(text_x)}" y="{_fmt(text_y)}" '
-            f'width="{_fmt(text_w)}" height="{_fmt(text_h)}">'
-            f'<div xmlns="http://www.w3.org/1999/xhtml" class="node-text">{text_html}</div>'
-            f'</foreignObject>'
+            f'<foreignObject x="{_fmt(x + left)}" y="{_fmt(y + top)}" '
+            f'width="{_fmt(tw)}" height="{_fmt(th)}">'
+            f'<div xmlns="http://www.w3.org/1999/xhtml" class="node-text" '
+            f'style="text-align:{halign};font-size:{_font_px(elem)}px">'
+            f'<div class="node-body va-{valign}">{text_html}</div></div>'
+            f"</foreignObject>"
         )
-    else:
-        body = ""
+    return _node_group(idx, (x, y, w, h), outline + body)
 
-    return (
-        f'<g class="wb-node" data-idx="{idx}" '
-        f'data-x="{_fmt(x)}" data-y="{_fmt(y)}" '
-        f'data-w="{_fmt(w)}" data-h="{_fmt(h)}">'
-        f"{outline}{body}</g>"
+
+def _render_text(elem: ClipboardElement, idx: int, boxes: dict[int, Box]) -> str:
+    """Free-floating text: coloured text, no outline, never clipped. In the
+    source these auto-size to content and `size` is only a placeholder."""
+    if not elem.position:
+        return ""
+    md, text_html = _text_of(elem)
+    if not text_html:
+        return ""
+    x, y, w, h = rendered_bounds(elem, markdown=md, metrics=SVG_METRICS)
+    boxes[idx] = (x, y, w, h)
+    color = _hex(elem.color) or DEFAULT_STROKE
+    halign = elem.alignment if elem.alignment in _HALIGN else "left"
+    nowrap = "white-space:nowrap;" if elem.allowFlexibleWidth else ""
+    inner = (
+        f'<foreignObject x="{_fmt(x)}" y="{_fmt(y)}" width="{_fmt(w)}" height="{_fmt(h)}" '
+        f'style="overflow:visible">'
+        f'<div xmlns="http://www.w3.org/1999/xhtml" class="node-text node-free" '
+        f'style="color:{color};text-align:{halign};font-size:{_font_px(elem)}px;{nowrap}">'
+        f'<div class="node-body">{text_html}</div></div>'
+        f"</foreignObject>"
+    )
+    return _node_group(idx, (x, y, w, h), inner, "wb-text")
+
+
+def _font_px(elem: ClipboardElement) -> str:
+    scale = elem.fontScale if elem.fontScale and elem.fontScale > 0 else 1.0
+    return _fmt(BASE_FONT_PX * scale)
+
+
+def _render_connector(
+    elem: ClipboardElement, idx: int, boxes: dict[int, Box], bounds: _Bounds
+) -> str:
+    src = _anchor_point(boxes.get(elem.sourceIndex), elem.sourceAnchor)
+    tgt = _anchor_point(boxes.get(elem.targetIndex), elem.targetAnchor)
+    # Recorded start/end are sometimes internal control points rather than
+    # edge anchors, so they are only a fallback when a reference is missing.
+    if src is None and elem.start and len(elem.start) >= 2:
+        src = (float(elem.start[0]), float(elem.start[1]))
+    if tgt is None and elem.end and len(elem.end) >= 2:
+        tgt = (float(elem.end[0]), float(elem.end[1]))
+    if src is None or tgt is None:
+        return ""
+
+    pts = _curve_points(
+        src[0], src[1], tgt[0], tgt[1],
+        _anchor_to_direction(elem.sourceAnchor), _anchor_to_direction(elem.targetAnchor),
+    )
+    for i in range(0, 8, 2):  # a cubic Bezier lies inside its control hull
+        bounds.point(pts[i], pts[i + 1])
+    sx, sy, c1x, c1y, c2x, c2y, ex, ey = pts
+    d = (
+        f"M {_fmt(sx)} {_fmt(sy)} C {_fmt(c1x)} {_fmt(c1y)}, "
+        f"{_fmt(c2x)} {_fmt(c2y)}, {_fmt(ex)} {_fmt(ey)}"
     )
 
-
-def _render_connector(elem: ClipboardElement, idx: int, dump: DumpFile) -> str:
-    endpoints = _connector_endpoints(elem, dump)
-    if endpoints is None:
-        return ""
-    sx, sy, ex, ey = endpoints
     color = _hex(elem.color) or EDGE_DEFAULT_STROKE
     width = max(1.0, float(elem.stroke or 1)) * 1.5
     dash = _stroke_dash(elem.strokeStyle, width)
     marker_end = ' marker-end="url(#arrow)"' if elem.endCap == CAP_ARROW else ""
     marker_start = ' marker-start="url(#arrow)"' if elem.startCap == CAP_ARROW else ""
-
-    s_dir = _anchor_to_direction(elem.sourceAnchor)
-    e_dir = _anchor_to_direction(elem.targetAnchor)
-    d = _build_curve(sx, sy, ex, ey, s_dir, e_dir)
-
-    sa_left = float(getattr(elem.sourceAnchor, "left", 0.5)) if elem.sourceAnchor else 0.5
-    sa_top = float(getattr(elem.sourceAnchor, "top", 0.5)) if elem.sourceAnchor else 0.5
-    ta_left = float(getattr(elem.targetAnchor, "left", 0.5)) if elem.targetAnchor else 0.5
-    ta_top = float(getattr(elem.targetAnchor, "top", 0.5)) if elem.targetAnchor else 0.5
+    sa, ta = _anchor_xy(elem.sourceAnchor), _anchor_xy(elem.targetAnchor)
     src_idx = elem.sourceIndex if elem.sourceIndex is not None else -1
     tgt_idx = elem.targetIndex if elem.targetIndex is not None else -1
-
     return (
-        f'<path class="wb-edge" data-idx="{idx}" '
-        f'data-src="{src_idx}" data-tgt="{tgt_idx}" '
-        f'data-sa="{sa_left},{sa_top}" data-ta="{ta_left},{ta_top}" '
-        f'data-startcap="{1 if elem.startCap == CAP_ARROW else 0}" '
-        f'data-endcap="{1 if elem.endCap == CAP_ARROW else 0}" '
+        f'<path class="wb-edge" data-idx="{idx}" data-src="{src_idx}" data-tgt="{tgt_idx}" '
+        f'data-sa="{_fmt(sa[0])},{_fmt(sa[1])}" data-ta="{_fmt(ta[0])},{_fmt(ta[1])}" '
         f'd="{d}" stroke="{color}" stroke-width="{_fmt(width)}" '
         f'fill="none" {dash}{marker_start}{marker_end}/>'
     )
 
 
-def _connector_endpoints(
-    elem: ClipboardElement, dump: DumpFile
-) -> tuple[float, float, float, float] | None:
-    """Compute connector endpoints from source/target shape geometry + anchors.
-    Falls back to the recorded start/end coordinates when refs are missing.
-    The recorded start/end are sometimes internal control points rather than
-    edge anchors, so this is more reliable for visual fidelity."""
-    src_pt = _anchor_point(elem.sourceIndex, elem.sourceAnchor, dump)
-    tgt_pt = _anchor_point(elem.targetIndex, elem.targetAnchor, dump)
-
-    if src_pt is None and elem.start and len(elem.start) >= 2:
-        src_pt = (float(elem.start[0]), float(elem.start[1]))
-    if tgt_pt is None and elem.end and len(elem.end) >= 2:
-        tgt_pt = (float(elem.end[0]), float(elem.end[1]))
-
-    if src_pt is None or tgt_pt is None:
-        return None
-    return src_pt[0], src_pt[1], tgt_pt[0], tgt_pt[1]
+def _anchor_xy(anchor: Any) -> tuple[float, float]:
+    if anchor is None:
+        return 0.5, 0.5
+    return float(getattr(anchor, "left", 0.5)), float(getattr(anchor, "top", 0.5))
 
 
-def _anchor_point(
-    idx: int | None, anchor: Any, dump: DumpFile
-) -> tuple[float, float] | None:
-    if idx is None or idx < 0 or idx >= len(dump.elements):
+def _anchor_point(box: Box | None, anchor: Any) -> tuple[float, float] | None:
+    if box is None:
         return None
-    shape = dump.elements[idx]
-    if not shape.position:
-        return None
-    md = _fix_mojibake(adf_to_markdown(shape.text)) if shape.text else None
-    bx, by, bw, bh = rendered_bounds(shape, markdown=md)
-    if bw <= 0 or bh <= 0:
-        return None
-    left = float(getattr(anchor, "left", 0.5)) if anchor else 0.5
-    top = float(getattr(anchor, "top", 0.5)) if anchor else 0.5
-    return bx + bw * left, by + bh * top
+    x, y, w, h = box
+    left, top = _anchor_xy(anchor)
+    return x + w * left, y + h * top
 
 
 def _anchor_to_direction(anchor: Any) -> str | None:
-    """Return which edge the connector exits/enters: left|right|top|bottom."""
+    """Which edge the connector exits/enters: left|right|top|bottom."""
     if anchor is None:
         return None
-    left = float(getattr(anchor, "left", 0.5))
-    top = float(getattr(anchor, "top", 0.5))
-    # Cardinal anchors are typically exactly 0 or 1 on one axis with 0.5 on the other.
+    left, top = _anchor_xy(anchor)
     if left <= 0.05:
         return "left"
     if left >= 0.95:
@@ -518,40 +579,21 @@ def _anchor_to_direction(anchor: Any) -> str | None:
     return None
 
 
-def _build_curve(
-    sx: float,
-    sy: float,
-    ex: float,
-    ey: float,
-    s_dir: str | None,
-    e_dir: str | None,
-) -> str:
-    dx = ex - sx
-    dy = ey - sy
-    span = max(abs(dx), abs(dy))
-    handle = max(40.0, span * 0.4)
-
+def _curve_points(
+    sx: float, sy: float, ex: float, ey: float, s_dir: str | None, e_dir: str | None
+) -> tuple[float, float, float, float, float, float, float, float]:
+    dx, dy = ex - sx, ey - sy
+    handle = max(40.0, max(abs(dx), abs(dy)) * 0.4)
     c1x, c1y = _control_point(sx, sy, s_dir, handle, dx, dy, leaving=True)
     c2x, c2y = _control_point(ex, ey, e_dir, handle, dx, dy, leaving=False)
-
-    return (
-        f"M {_fmt(sx)} {_fmt(sy)} C {_fmt(c1x)} {_fmt(c1y)}, "
-        f"{_fmt(c2x)} {_fmt(c2y)}, {_fmt(ex)} {_fmt(ey)}"
-    )
+    return sx, sy, c1x, c1y, c2x, c2y, ex, ey
 
 
 def _control_point(
-    x: float,
-    y: float,
-    direction: str | None,
-    handle: float,
-    dx: float,
-    dy: float,
-    leaving: bool,
+    x: float, y: float, direction: str | None, handle: float, dx: float, dy: float, leaving: bool
 ) -> tuple[float, float]:
-    """Push the control point AWAY from the box (along the exit direction) when
-    leaving, or AWAY from the target box (so curve enters from the right side)
-    when arriving. The marker-end then points along the entry tangent."""
+    """Push the handle out of the box along the anchor's edge normal, so the
+    curve leaves/enters perpendicular to the edge and the arrowhead points at it."""
     if direction == "right":
         return x + handle, y
     if direction == "left":
@@ -560,17 +602,18 @@ def _control_point(
         return x, y - handle
     if direction == "bottom":
         return x, y + handle
-    # No anchor info: bias horizontally based on overall direction
     if abs(dx) >= abs(dy):
         return (x + handle if leaving else x - handle), y
     return x, (y + handle if leaving else y - handle)
 
 
-def _render_path(elem: ClipboardElement, idx: int) -> str:
+def _render_path(elem: ClipboardElement, bounds: _Bounds) -> str:
     if not elem.start or not elem.end or len(elem.start) < 2 or len(elem.end) < 2:
         return ""
     sx, sy = float(elem.start[0]), float(elem.start[1])
     ex, ey = float(elem.end[0]), float(elem.end[1])
+    bounds.point(sx, sy)
+    bounds.point(ex, ey)
     color = _hex(elem.color) or EDGE_DEFAULT_STROKE
     width = max(1.0, float(elem.stroke or 1)) * 1.5
     dash = _stroke_dash(elem.strokeStyle, width)
@@ -580,20 +623,19 @@ def _render_path(elem: ClipboardElement, idx: int) -> str:
     )
 
 
-def _render_image(elem: ClipboardElement, idx: int, dump: DumpFile, vault_prefix: str) -> str:
+def _render_image(
+    elem: ClipboardElement, idx: int, dump: DumpFile, boxes: dict[int, Box]
+) -> str:
     if not elem.fileId or not elem.position or not elem.size:
         return ""
-    href = dump.media.get(elem.fileId) or f"media/{elem.fileId}"
-    if vault_prefix:
-        href = vault_prefix.rstrip("/") + "/" + href.lstrip("/")
-    href = _xml_escape(href)
-    return (
-        f'<g class="wb-node" data-idx="{idx}" '
-        f'data-x="{_fmt(elem.position.x)}" data-y="{_fmt(elem.position.y)}" '
-        f'data-w="{_fmt(elem.size.x)}" data-h="{_fmt(elem.size.y)}">'
-        f'<image x="{_fmt(elem.position.x)}" y="{_fmt(elem.position.y)}" '
-        f'width="{_fmt(elem.size.x)}" height="{_fmt(elem.size.y)}" href="{href}"/>'
-        f'</g>'
+    box = (elem.position.x, elem.position.y, elem.size.x, elem.size.y)
+    boxes[idx] = box
+    href = _xml_escape(dump.media.get(elem.fileId) or f"media/{elem.fileId}")
+    x, y, w, h = box
+    return _node_group(
+        idx,
+        box,
+        f'<image x="{_fmt(x)}" y="{_fmt(y)}" width="{_fmt(w)}" height="{_fmt(h)}" href="{href}"/>',
     )
 
 
@@ -627,6 +669,13 @@ _INTERACTIVE_JS = r"""
       svg = document.querySelector('svg');
       if (!svg) return;
     }
+    // Opened directly in a browser: fill the window instead of a fixed-size
+    // canvas. (When embedded via <img>, scripts never run and the intrinsic
+    // size is kept.)
+    if (svg === document.documentElement) {
+      svg.setAttribute('width', '100%');
+      svg.setAttribute('height', '100%');
+    }
     var nodeMap = new Map();
     var edgeList = [];
     var nodeEls = svg.querySelectorAll('g.wb-node');
@@ -656,26 +705,19 @@ _INTERACTIVE_JS = r"""
     enablePanZoom(svg);
 
     function autoFit() {
-      // Only grow simple <rect> shapes — paths (cylinders, etc.) and images
-      // would need shape-specific path recomputation, skip those for now.
+      // Grow plain-rect nodes whose text overflows. scrollHeight/clientHeight
+      // are in the foreignObject's own user units, so no screen-CTM scaling.
+      // Non-rect outlines (cylinder, ...) would need their path regenerated.
       nodeMap.forEach(function (nd) {
-        var fo = nd.foreignObject;
-        var rect = nd.rect;
+        var fo = nd.foreignObject, rect = nd.rect;
         if (!fo || !rect) return;
-        var div = fo.querySelector('div');
-        if (!div) return;
-        var natural = div.getBoundingClientRect();
-        if (!natural || !natural.height) return;
-        var ctm = svg.getScreenCTM();
-        var scaleY = ctm ? ctm.d : 1;
-        var contentH = natural.height / scaleY;
-        var foH = parseFloat(fo.getAttribute('height')) || 0;
-        if (contentH > foH + 1) {
-          fo.setAttribute('height', contentH);
-          rect.setAttribute('height', contentH);
-          var rectH = parseFloat(rect.getAttribute('height')) || 0;
-          nd.group.setAttribute('data-h', rectH);
-        }
+        var box = fo.querySelector('div.node-text');
+        if (!box) return;
+        var delta = box.scrollHeight - box.clientHeight;
+        if (delta <= 1) return;
+        fo.setAttribute('height', parseFloat(fo.getAttribute('height')) + delta);
+        rect.setAttribute('height', parseFloat(rect.getAttribute('height')) + delta);
+        nd.group.setAttribute('data-h', parseFloat(nd.group.getAttribute('data-h')) + delta);
       });
     }
 
@@ -823,27 +865,3 @@ def _empty_svg() -> str:
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" '
         'width="100" height="100"></svg>'
     )
-
-
-def _compute_bounds(dump: DumpFile) -> tuple[float, float, float, float] | None:
-    xs: list[float] = []
-    ys: list[float] = []
-    for elem in dump.elements:
-        if elem.position:
-            xs.append(elem.position.x)
-            ys.append(elem.position.y)
-            if elem.size:
-                xs.append(elem.position.x + elem.size.x)
-                ys.append(elem.position.y + elem.size.y)
-        if elem.basisPosition and elem.basisSize:
-            xs.append(elem.basisPosition.x)
-            ys.append(elem.basisPosition.y)
-            xs.append(elem.basisPosition.x + elem.basisSize.x)
-            ys.append(elem.basisPosition.y + elem.basisSize.y)
-        for pt in (elem.start, elem.end):
-            if pt and len(pt) >= 2:
-                xs.append(float(pt[0]))
-                ys.append(float(pt[1]))
-    if not xs or not ys:
-        return None
-    return min(xs), min(ys), max(xs), max(ys)

@@ -179,3 +179,40 @@ def test_dump_to_canvas_resolve_collisions_opt_in() -> None:
     doc_on = dump_to_canvas(dump, resolve_collisions=True)
     # The fixture's nodes don't overlap, so on/off produce identical positions.
     assert len(doc_off.nodes) == len(doc_on.nodes) == 3
+
+
+def _elem(**kw):
+    from wb2canvas.model import ClipboardElement
+
+    return ClipboardElement.model_validate(kw)
+
+
+def test_rendered_bounds_uses_basis_geometry_for_shapes() -> None:
+    from wb2canvas.convert import rendered_bounds
+
+    e = _elem(type="shape", position={"x": 10, "y": 50}, size={"x": 160, "y": 160},
+              basisPosition={"x": 10, "y": 11}, basisSize={"x": 298, "y": 144})
+    assert rendered_bounds(e) == (10, 11, 298, 144)
+
+
+def test_rendered_bounds_wraps_long_text_by_growing_height_only() -> None:
+    from wb2canvas.convert import SVG_METRICS, rendered_bounds
+
+    e = _elem(type="shape", position={"x": 0, "y": 0}, size={"x": 160, "y": 160},
+              basisPosition={"x": 0, "y": 0}, basisSize={"x": 298, "y": 144})
+    md = "**Service D**\n\n- " + "Breaks paragraphs where words go CompoundWordHere " * 8
+    x, y, w, h = rendered_bounds(e, markdown=md, metrics=SVG_METRICS)
+    assert w == 298
+    assert h > 144
+
+
+def test_rendered_bounds_free_text_ignores_placeholder_size() -> None:
+    from wb2canvas.convert import SVG_METRICS, rendered_bounds
+
+    e = _elem(type="text", position={"x": 5, "y": 6}, size={"x": 76, "y": 38},
+              basisPosition={"x": 5, "y": 6}, basisSize={"x": 34, "y": 38}, allowFlexibleWidth=True)
+    x, y, w, h = rendered_bounds(e, markdown="- First list item here\n- Second & third item\n- Fourth bullet",
+                                 metrics=SVG_METRICS)
+    assert (x, y) == (5, 6)
+    assert w > 76 * 2, "auto-width text sizes to its longest line"
+    assert h > 38 * 1.5, "three lines need more than the placeholder height"

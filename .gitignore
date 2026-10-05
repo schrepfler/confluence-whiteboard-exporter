@@ -17,3 +17,5 @@ storage_state.json
 *.env
 
 .DS_Store
+
+.claude/settings.local.json
