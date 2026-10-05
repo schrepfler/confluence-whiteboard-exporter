@@ -5,18 +5,20 @@ A dump holds one of two raw captures: the canvas's own copy/paste payload
 `from_dump` normalises either into a `Board`, so each renderer is written
 once against one model.
 
-Node geometry is the source's own: the boxes Confluence draws. Renderers
-call `layout()` to adapt those boxes to their text metrics.
+Node geometry is the source's own: the boxes Confluence draws (it stores
+centres; the model holds top-left corners). Renderers call `layout()` to
+adapt those boxes to their text metrics.
 """
 
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import re
 import struct
-from collections import defaultdict
-from dataclasses import dataclass, replace
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import cached_property
 from pathlib import Path
@@ -25,10 +27,19 @@ from typing import Any
 from .adf import adf_to_html, adf_to_markdown
 from .model import Anchor, BoardMeta, ClipboardElement, DumpFile, FiberDump, Vector2, Vector3
 
-CAP_ARROW = 2
-STROKE_DASHED = 2
+log = logging.getLogger(__name__)
+
+# Editor enums (docs/confluence-whiteboard-model.md), by stored number.
+CAPS = {
+    1: "none", 2: "arrow", 3: "filled-arrow", 4: "open-arrow", 5: "filled-diamond",
+    6: "open-diamond", 7: "open-circle", 8: "slash", 9: "triple-bar", 10: "open-circle-cross",
+    11: "cross", 12: "cross-crows-foot", 13: "crows-foot", 14: "circle-crows-foot",
+}
+STROKE_STYLES = {0: "none", 1: "solid", 2: "dashed", 3: "dotted"}
+ROUTINGS = {1: "straight", 2: "dynamic", 3: "curved"}
 _VALIGN = {0: "top", 1: "middle", 2: "bottom"}  # observed: shapes use 1 (middle)
 _HALIGN = frozenset({"left", "center", "right"})
+_FIBER_HALIGN = {0: "center", 1: "left", 2: "right"}
 
 Box = tuple[float, float, float, float]
 Point = tuple[float, float]
@@ -105,7 +116,7 @@ class Node:
     fill: Rgb | None = None  # None means unfilled
     stroke: Rgb | None = None
     color: Rgb | None = None  # text colour of free text
-    dashed: bool = False
+    stroke_style: str = "solid"  # a STROKE_STYLES value
     stroke_width: float = 1.0
     shape_kind: int | None = None
     align: str = "center"
@@ -134,11 +145,13 @@ class Edge:
     target_anchor: Point = CENTER
     start: Point | None = None  # recorded endpoint, used when source is None
     end: Point | None = None
-    start_arrow: bool = False
-    end_arrow: bool = False
+    start_cap: str = "none"  # a CAPS value
+    end_cap: str = "none"
+    routing: str = "curved"  # a ROUTINGS value
+    waypoints: tuple[Point, ...] = ()  # bend points, in order
     color: Rgb | None = None
-    dashed: bool = False
-    width: float = 1.0
+    stroke_style: str = "solid"
+    stroke_size: int = 1  # 1 small, 2 medium, 3 large
 
 
 @dataclass(eq=False)
@@ -159,36 +172,77 @@ def load_board(dump_path: Path) -> Board:
 
 
 def from_dump(dump: DumpFile) -> Board:
+    losses = _Losses()
     if dump.strategy == "fiber" and dump.fiber_dump is not None:
-        nodes, edges = _from_fiber(dump.fiber_dump, dump.media)
+        nodes, edges = _from_fiber(dump.fiber_dump, dump.media, losses)
     else:
-        nodes, edges = _from_clipboard(dump.elements, dump.media)
+        nodes, edges = _from_clipboard(dump.elements, dump.media, losses)
     node_ids = {n.id for n in nodes}
     for e in edges:  # an end that is not a drawn node falls back to its point
         if e.source not in node_ids:
             e.source = None
         if e.target not in node_ids:
             e.target = None
+    losses.report(dump.board.boardId)
     return Board(meta=dump.board, nodes=nodes, edges=edges)
+
+
+@dataclass
+class _Losses:
+    """What a dump holds that the model cannot represent, reported once."""
+
+    elements: Counter[str] = field(default_factory=Counter)
+    values: set[str] = field(default_factory=set)
+
+    def enum(self, table: dict[int, str], value: Any, what: str, default: str) -> str:
+        if value is None:
+            return default
+        name = table.get(value) if isinstance(value, int) else None
+        if name is None:
+            self.values.add(f"{what} {value!r}")
+            return default
+        return name
+
+    def report(self, board_id: str) -> None:
+        if self.elements:
+            omitted = ", ".join(f"{n} {t}" for t, n in sorted(self.elements.items()))
+            log.warning("board %s: omitted elements it cannot draw: %s", board_id, omitted)
+        if self.values:
+            log.warning("board %s: unknown %s; drawn with defaults", board_id, ", ".join(sorted(self.values)))
 
 
 # ------------------------------------------------------- clipboard adapter
 
 
 def _from_clipboard(
-    elements: list[ClipboardElement], media: dict[str, str]
+    elements: list[ClipboardElement], media: dict[str, str], losses: _Losses
 ) -> tuple[list[Node], list[Edge]]:
     ids = stable_ids(elements)
-    nodes = [n for i, e in enumerate(elements) if (n := _clip_node(ids[i], e, media))]
-    edges = [
-        _clip_edge(ids[i], e, ids)
-        for i, e in enumerate(elements)
-        if e.type == "connector"
-    ]
-    return nodes, edges
+    nodes: list[Node] = []
+    edges: dict[int, Edge] = {}
+    bends: dict[int, list[tuple[float, Point]]] = defaultdict(list)
+    for i, e in enumerate(elements):
+        if e.type == "connector":
+            edges[i] = _clip_edge(ids[i], e, ids, losses)
+        elif e.type == "pathWaypoint" and e.position and e.sourcePathIndex is not None:
+            bends[e.sourcePathIndex].append((e.order or 0.0, (e.position.x, e.position.y)))
+        elif node := _clip_node(ids[i], e, media, losses):
+            nodes.append(node)
+        else:
+            losses.elements[e.type] += 1
+    _attach_waypoints(edges, bends, losses)
+    return nodes, list(edges.values())
 
 
-def _clip_node(nid: str, e: ClipboardElement, media: dict[str, str]) -> Node | None:
+def _attach_waypoints(edges: dict[Any, Edge], bends: dict[Any, list[tuple[float, Point]]], losses: _Losses) -> None:
+    for key, points in bends.items():
+        if (edge := edges.get(key)) is None:
+            losses.elements["pathWaypoint"] += len(points)
+        else:
+            edge.waypoints = tuple(p for _, p in sorted(points))
+
+
+def _clip_node(nid: str, e: ClipboardElement, media: dict[str, str], losses: _Losses) -> Node | None:
     if e.type == "shape" and e.position:
         x, y, w, h = _drawn_box(e)
         return Node(
@@ -197,7 +251,7 @@ def _clip_node(nid: str, e: ClipboardElement, media: dict[str, str]) -> Node | N
             x=x, y=y, w=w, h=h,
             fill=Rgb.from_vector(e.color) if e.fillEnabled else None,
             stroke=Rgb.from_vector(e.strokeColor) or Rgb.from_vector(e.color),
-            dashed=e.strokeStyle == STROKE_DASHED,
+            stroke_style=losses.enum(STROKE_STYLES, e.strokeStyle, "stroke style", "solid"),
             stroke_width=float(e.stroke or 1),
             shape_kind=e.shape,
             align=e.alignment if e.alignment in _HALIGN else "center",
@@ -206,11 +260,11 @@ def _clip_node(nid: str, e: ClipboardElement, media: dict[str, str]) -> Node | N
             adf=_fix_mojibake(e.text),
         )
     if e.type == "text" and e.position:
-        size = e.size or Vector2(x=0, y=0)
+        x, y, w, h = _drawn_box(e)
         return Node(
             id=nid,
             kind=Kind.TEXT,
-            x=e.position.x, y=e.position.y, w=size.x, h=size.y,
+            x=x, y=y, w=w, h=h,
             color=Rgb.from_vector(e.color),
             align=e.alignment if e.alignment in _HALIGN else "left",
             valign="top",
@@ -219,21 +273,22 @@ def _clip_node(nid: str, e: ClipboardElement, media: dict[str, str]) -> Node | N
             adf=_fix_mojibake(e.text),
         )
     if e.type == "image" and e.fileId and e.position and e.size:
+        x, y, w, h = _centred(e.position.x, e.position.y, e.size.x, e.size.y)
         return Node(
             id=nid,
             kind=Kind.IMAGE,
-            x=e.position.x, y=e.position.y, w=e.size.x, h=e.size.y,
+            x=x, y=y, w=w, h=h,
             image=Image(e.fileId, media.get(e.fileId) or f"media/{e.fileId}"),
         )
     if e.type == "path":
         start, end = _point(e.start), _point(e.end)
         if start and end:
-            return _line(nid, (start, end), Rgb.from_vector(e.color),
-                         e.strokeStyle == STROKE_DASHED, float(e.stroke or 1))
-    return None  # connectors become edges; pathWaypoints have no visual of their own
+            style = losses.enum(STROKE_STYLES, e.strokeStyle, "stroke style", "solid")
+            return _line(nid, (start, end), Rgb.from_vector(e.color), style, float(e.stroke or 1))
+    return None  # not drawn yet: stickies, sections, tables, ...
 
 
-def _clip_edge(eid: str, e: ClipboardElement, ids: list[str]) -> Edge:
+def _clip_edge(eid: str, e: ClipboardElement, ids: list[str], losses: _Losses) -> Edge:
     return Edge(
         id=eid,
         source=_index_id(e.sourceIndex, ids),
@@ -242,24 +297,41 @@ def _clip_edge(eid: str, e: ClipboardElement, ids: list[str]) -> Edge:
         target_anchor=_anchor(e.targetAnchor),
         start=_point(e.start),
         end=_point(e.end),
-        start_arrow=e.startCap == CAP_ARROW,
-        end_arrow=e.endCap == CAP_ARROW,
+        start_cap=losses.enum(CAPS, e.startCap, "line end", "none"),
+        end_cap=losses.enum(CAPS, e.endCap, "line end", "none"),
+        routing=losses.enum(ROUTINGS, e.presentation, "routing", "curved"),
         color=Rgb.from_vector(e.color),
-        dashed=e.strokeStyle == STROKE_DASHED,
-        width=float(e.stroke or 1),
+        stroke_style=losses.enum(STROKE_STYLES, e.strokeStyle, "stroke style", "solid"),
+        stroke_size=int(e.stroke or 1),
     )
 
 
 def _drawn_box(e: ClipboardElement) -> Box:
-    """Shapes are drawn at basisPosition/basisSize. `size` is not usable: on
-    a sample board every shape stores the same 160x160 default, while
-    basisSize widths match the drawn widths to within a few px."""
+    """The box the editor draws a shape or text element in."""
     assert e.position is not None
-    if e.basisSize and e.basisSize.x > 0 and e.basisSize.y > 0:
-        origin = e.basisPosition or e.position
-        return origin.x, origin.y, e.basisSize.x, e.basisSize.y
-    size = e.size or Vector2(x=0, y=0)
-    return e.position.x, e.position.y, size.x, size.y
+    return _grown_box(_xy(e.position), _xy(e.size), _xy(e.basisPosition), _xy(e.basisSize))
+
+
+def _grown_box(centre: Point, size: Point | None, basis_centre: Point | None, basis_size: Point | None) -> Box:
+    """`position` is the centre of the drawn box. The basis box is the box
+    before its content grew it; growth keeps one corner fixed, so the drawn
+    size is the basis size plus twice the centre's shift. The stored `size`
+    is stale (160x160 for every shape on a sample board)."""
+    cx, cy = centre
+    if basis_size and basis_size[0] > 0 and basis_size[1] > 0:
+        bx, by = basis_centre or centre
+        w, h = basis_size[0] + 2 * abs(cx - bx), basis_size[1] + 2 * abs(cy - by)
+    else:
+        w, h = size or (0.0, 0.0)
+    return _centred(cx, cy, w, h)
+
+
+def _centred(cx: float, cy: float, w: float, h: float) -> Box:
+    return cx - w / 2, cy - h / 2, w, h
+
+
+def _xy(v: Vector2 | None) -> Point | None:
+    return (v.x, v.y) if v is not None else None
 
 
 def stable_ids(elements: list[ClipboardElement]) -> list[str]:
@@ -322,7 +394,7 @@ def _index_id(idx: int | None, ids: list[Any]) -> str | None:
 # ----------------------------------------------------------- fiber adapter
 
 
-def _from_fiber(fd: FiberDump, media: dict[str, str]) -> tuple[list[Node], list[Edge]]:
+def _from_fiber(fd: FiberDump, media: dict[str, str], losses: _Losses) -> tuple[list[Node], list[Edge]]:
     """The Yjs fallback. Element text (`tx`) is an undecoded binary encoding,
     so nodes come out without text; geometry, colour and edges are intact."""
     dims: dict[str, dict[str, Any]] = defaultdict(dict)
@@ -334,52 +406,63 @@ def _from_fiber(fd: FiberDump, media: dict[str, str]) -> tuple[list[Node], list[
     in_z = set(fd.zindex)
     order = list(fd.zindex) + [k for k in fd.board if k not in in_z]
     nodes: list[Node] = []
-    edges: list[Edge] = []
+    edges: dict[str, Edge] = {}
+    bends: dict[str, list[tuple[float, Point]]] = defaultdict(list)
     for eid in order:
         raw = fd.board.get(eid)
         if not isinstance(raw, dict):
             continue
         t, d = raw.get("t"), dims.get(eid, {})
+        if t == "pathWaypoint" and raw.get("pi") and (d.get("bp") or d.get("p")):
+            bends[str(raw["pi"])].append((_num(raw.get("or"), 0.0), _pair(d.get("bp") or d.get("p"))))
+            continue
         if t == "connector":
-            edges.append(Edge(
+            edges[eid] = Edge(
                 id=eid,
                 source=_str(raw.get("se")),
                 target=_str(raw.get("te")),
                 source_anchor=_anchor(raw.get("sa")),
                 target_anchor=_anchor(raw.get("ta")),
-                start_arrow=raw.get("sc") == CAP_ARROW,
-                end_arrow=raw.get("ec") == CAP_ARROW,
+                start_cap=losses.enum(CAPS, raw.get("sc"), "line end", "none"),
+                end_cap=losses.enum(CAPS, raw.get("ec"), "line end", "none"),
+                routing=losses.enum(ROUTINGS, raw.get("pr"), "routing", "curved"),
                 color=Rgb.from_float32_be(raw.get("c")),
-                dashed=raw.get("sts") == STROKE_DASHED,
-                width=_num(raw.get("st"), 1.0),
-            ))
+                stroke_style=losses.enum(STROKE_STYLES, raw.get("sts"), "stroke style", "solid"),
+                stroke_size=int(_num(raw.get("st"), 1.0)),
+            )
             continue
+        if t in ("shape", "text"):
+            x, y, w, h = _grown_box(_pair(d.get("p")), _opt_pair(d.get("s")), _opt_pair(d.get("bp")),
+                                    _opt_pair(d.get("bs")))
         if t == "shape":
-            x, y = _pair(d.get("bp") or d.get("p"))
-            w, h = _pair(d.get("bs") or d.get("s"))
             fill_rgb = Rgb.from_float32_be(raw.get("c"))
             nodes.append(Node(
                 id=eid, kind=Kind.SHAPE, x=x, y=y, w=w, h=h,
                 fill=fill_rgb if raw.get("fe") else None,
                 stroke=Rgb.from_float32_be(raw.get("stc")) or fill_rgb,
-                dashed=raw.get("sts") == STROKE_DASHED,
+                stroke_style=losses.enum(STROKE_STYLES, raw.get("sts"), "stroke style", "solid"),
+                stroke_width=_num(raw.get("st"), 1.0),
                 shape_kind=raw.get("sh") if isinstance(raw.get("sh"), int) else None,
+                align=_FIBER_HALIGN.get(raw.get("a", 0), "center"),
                 valign=_VALIGN.get(raw.get("va", 1), "middle"),
+                font_scale=_scale(_num(d.get("fs"), 1.0)),
             ))
         elif t == "text":
-            x, y = _pair(d.get("p"))
-            w, h = _pair(d.get("s"))
             nodes.append(Node(id=eid, kind=Kind.TEXT, x=x, y=y, w=w, h=h,
                               color=Rgb.from_float32_be(raw.get("c")),
-                              align="left", valign="top"))
+                              align=_FIBER_HALIGN.get(raw.get("a", 1), "left"), valign="top",
+                              font_scale=_scale(_num(d.get("fs"), 1.0)),
+                              auto_width=bool(raw.get("fw"))))
         elif t == "image" and raw.get("fi"):
-            x, y = _pair(d.get("p"))
-            w, h = _pair(d.get("s"))
+            x, y, w, h = _centred(*_pair(d.get("p")), *_pair(d.get("s")))
             fid = str(raw["fi"])
             nodes.append(Node(id=eid, kind=Kind.IMAGE, x=x, y=y, w=w, h=h,
                               image=Image(fid, media.get(fid) or f"media/{fid}")))
-        # paths keep their points outside `board`; they are not captured
-    return nodes, edges
+        else:
+            # Includes paths: their points live outside `board` and are not captured.
+            losses.elements[str(t)] += 1
+    _attach_waypoints(edges, bends, losses)
+    return nodes, list(edges.values())
 
 
 # ------------------------------------------------------------------ layout
@@ -418,7 +501,10 @@ def node_box(node: Node, metrics: TextMetrics) -> Box:
     md = node.markdown
     if node.kind is Kind.TEXT and md:
         tw, th = _unwrapped_bounds(md, m)
-        return node.x, node.y, max(node.w, tw), max(node.h, th)
+        w, h = max(node.w, tw), max(node.h, th)
+        # Text widens away from its aligned edge, as in the editor.
+        shift = {"left": 0.0, "center": 0.5, "right": 1.0}.get(node.align, 0.0) * (w - node.w)
+        return node.x - shift, node.y, w, h
     if node.kind is Kind.SHAPE and md and node.w > 0:
         return node.x, node.y, node.w, max(node.h, _wrapped_height(md, node.w, m))
     return node.x, node.y, node.w, node.h
@@ -483,12 +569,12 @@ def _wrapped_height(markdown: str, width: float, m: TextMetrics) -> float:
 # ----------------------------------------------------------------- helpers
 
 
-def _line(nid: str, points: tuple[Point, Point], color: Rgb | None, dashed: bool, width: float) -> Node:
+def _line(nid: str, points: tuple[Point, Point], color: Rgb | None, style: str, width: float) -> Node:
     (x1, y1), (x2, y2) = points
     return Node(
         id=nid, kind=Kind.LINE,
         x=min(x1, x2), y=min(y1, y2), w=abs(x2 - x1), h=abs(y2 - y1),
-        stroke=color, dashed=dashed, stroke_width=width, points=points,
+        stroke=color, stroke_style=style, stroke_width=width, points=points,
     )
 
 
@@ -524,9 +610,13 @@ def _rounded(p: list[float] | None) -> tuple[int, int] | None:
 
 
 def _pair(v: Any) -> Point:
+    return _opt_pair(v) or (0.0, 0.0)
+
+
+def _opt_pair(v: Any) -> Point | None:
     if isinstance(v, (list, tuple)) and len(v) >= 2:
         return _num(v[0], 0.0), _num(v[1], 0.0)
-    return 0.0, 0.0
+    return None
 
 
 def _num(v: Any, default: float) -> float:

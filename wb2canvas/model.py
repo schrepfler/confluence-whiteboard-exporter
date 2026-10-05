@@ -79,7 +79,13 @@ class ClipboardElement(BaseModel):
     stroke: int | None = None
     start: list[float] | None = None
     end: list[float] | None = None
-    segments: list[Any] | None = None
+    segments: list[Any] | None = None  # cached geometry; stale, not used
+
+    # pathWaypoint: a bend point of the connector at index sourcePathIndex.
+    sourcePathIndex: int | None = None
+    sourcePathId: str | None = None
+    order: float | None = None
+    axis: int | None = None
 
     fileId: str | None = None
     mimeType: str | None = None

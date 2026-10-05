@@ -1,13 +1,17 @@
 """Shape stereotypes: SVG outline geometry and safe text areas.
 
-Confluence stores a numeric shape kind; DEFAULT_SHAPE_MAP names the kinds
-confirmed against real boards, and callers may extend it.
+Confluence stores a shape's kind as a number; KIND_NAMES gives each its
+editor key (see docs/confluence-whiteboard-model.md). DEFAULT_SHAPE_MAP
+picks the stereotype drawn for each kind. Kinds it does not cover are drawn
+as plain rectangles, which is also what Atlassian's own exporter does.
 """
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable
+from dataclasses import dataclass
+
+Inset = tuple[float, float, float, float]  # top, right, bottom, left
 
 
 def fmt(v: float | int) -> str:
@@ -17,17 +21,127 @@ def fmt(v: float | int) -> str:
     return f"{v:.1f}".rstrip("0").rstrip(".")
 
 
-# Confluence whiteboard shape kind integers we've observed empirically.
-# Only 3 (rect) and 13 (cylinder) are confirmed against actual data; the rest
-# are configurable via the shape_map parameter / --shape-map CLI flag.
+# The editor's shape enum, keyed as in its shape picker and i18n catalog.
+KIND_NAMES: dict[int, str] = dict(enumerate([
+    "sharp-rectangle", "rectangle", "ellipse", "rounded-rectangle", "diamond",
+    "triangle", "upside-down-triangle", "left-parallelogram", "right-parallelogram",
+    "start-end", "document", "off-page", "input-output", "database", "sum", "or",
+    "predefined-process", "internal-storage", "manual-input", "manual-operation",
+    "multiple-documents", "preparation", "hard-disk", "comment-left", "comment-right",
+    "stored-data", "delay", "display", "process", "decision", "connector", "merge",
+    "cloud", "key", "server", "archive", "browser", "user", "compute", "computer",
+    "file", "firewall", "folder", "frontend", "internet", "lock", "mail", "mobile",
+    "settings", "shield", "users", "switch", "database-advanced", "alternate-process",
+    "use-case", "classifier", "note", "interface-2", "activation", "activity", "actor",
+    "assembly", "component", "deletion", "end", "flow-final", "gateway",
+    "history-pseudostate", "horizontal-fork", "vertical-fork", "off-page-link",
+    "pin-filled-left", "pin-filled-right", "pin-left", "pin-right", "pin",
+    "provided-interface", "receive-signal", "required-interface", "send-signal",
+    "start", "template", "class", "interface", "node", "container",
+    "boundary-object", "entity-object", "control-object",
+]))
+KIND_BY_NAME: dict[str, int] = {name: kind for kind, name in KIND_NAMES.items()}
+
+# A shape with no kind is the model's default, kind 0.
+DEFAULT_KIND = 0
+
+# Kind -> stereotype. Several kinds share a stereotype; a few are
+# approximations (multiple-documents as one document, database-advanced as a
+# cylinder, start/end/history-pseudostate as plain circles).
 DEFAULT_SHAPE_MAP: dict[int, str] = {
-    3: "rect",
+    0: "rect",
+    1: "rect",
+    2: "ellipse",
+    3: "rounded-rect",
+    4: "diamond",
+    5: "triangle",
+    6: "down-triangle",
+    7: "left-parallelogram",
+    8: "right-parallelogram",
+    9: "stadium",
+    10: "document",
+    11: "off-page",
+    12: "right-parallelogram",
     13: "cylinder",
+    14: "circle-cross",
+    15: "circle-plus",
+    16: "predefined-process",
+    17: "internal-storage",
+    18: "manual-input",
+    19: "manual-operation",
+    20: "document",
+    21: "hexagon",
+    22: "hard-disk",
+    23: "comment-left",
+    24: "comment-right",
+    25: "stored-data",
+    26: "delay",
+    27: "display",
+    28: "rect",
+    29: "diamond",
+    30: "ellipse",
+    31: "down-triangle",
+    32: "cloud",
+    52: "cylinder",
+    53: "rounded-rect",
+    54: "ellipse",
+    56: "note",
+    59: "rounded-rect",
+    64: "ellipse",
+    65: "circle-cross",
+    66: "diamond",
+    67: "ellipse",
+    70: "off-page",
+    80: "ellipse",
 }
 
 
+@dataclass(frozen=True)
+class Outline:
+    name: str  # the stereotype drawn
+    d: str = ""  # SVG path data; empty for the rectangle family
+    radius: float = 0.0  # corner radius, rectangle family only
+
+    @property
+    def is_rect(self) -> bool:
+        return not self.d
+
+
+def outline(kind: int | None, x: float, y: float, w: float, h: float, shape_map: dict[int, str]) -> Outline:
+    """How to draw a shape of `kind` in the box (x, y, w, h)."""
+    name = stereotype(kind, shape_map) or "rect"
+    if name in RECT_RADIUS:
+        return Outline(name, radius=RECT_RADIUS[name](w, h))
+    return Outline(name, d=GENERATORS[name](x, y, w, h))
+
+
+def stereotype(kind: int | None, shape_map: dict[int, str]) -> str | None:
+    """The stereotype `shape_map` names for `kind`, or None if it has none."""
+    name = shape_map.get(DEFAULT_KIND if kind is None else kind)
+    return name if name in STEREOTYPES else None
+
+
+def kind_label(kind: int | None) -> str:
+    k = DEFAULT_KIND if kind is None else kind
+    return f"{KIND_NAMES.get(k, 'unknown')} ({k})"
+
+
+# ------------------------------------------------------------------ geometry
+
+Point = tuple[float, float]
+
+
+def _poly(*pts: Point) -> str:
+    head, *rest = pts
+    return f"M {_xy(head)} " + " ".join(f"L {_xy(p)}" for p in rest) + " Z"
+
+
+def _xy(p: Point) -> str:
+    return f"{fmt(p[0])} {fmt(p[1])}"
+
+
 def _cylinder_path(x: float, y: float, w: float, h: float) -> str:
-    """Database stereotype: rectangle front + elliptical bottom + visible top rim."""
+    """Database: rectangle front, elliptical bottom, visible top rim."""
     e = min(h * 0.14, 22.0)
     rx = w / 2
     return (
@@ -41,6 +155,21 @@ def _cylinder_path(x: float, y: float, w: float, h: float) -> str:
     )
 
 
+def _hard_disk_path(x: float, y: float, w: float, h: float) -> str:
+    """Direct-access storage: a cylinder lying on its side, face to the right."""
+    e = min(w * 0.12, 22.0)
+    ry = h / 2
+    return (
+        f"M {fmt(x + e)} {fmt(y)} "
+        f"L {fmt(x + w - e)} {fmt(y)} "
+        f"A {fmt(e)} {fmt(ry)} 0 0 1 {fmt(x + w - e)} {fmt(y + h)} "
+        f"L {fmt(x + e)} {fmt(y + h)} "
+        f"A {fmt(e)} {fmt(ry)} 0 0 1 {fmt(x + e)} {fmt(y)} Z "
+        f"M {fmt(x + w - e)} {fmt(y)} "
+        f"A {fmt(e)} {fmt(ry)} 0 0 0 {fmt(x + w - e)} {fmt(y + h)}"
+    )
+
+
 def _ellipse_path(x: float, y: float, w: float, h: float) -> str:
     cx, cy = x + w / 2, y + h / 2
     rx, ry = w / 2, h / 2
@@ -51,101 +180,151 @@ def _ellipse_path(x: float, y: float, w: float, h: float) -> str:
     )
 
 
-def _diamond_path(x: float, y: float, w: float, h: float) -> str:
+def _circle_cross_path(x: float, y: float, w: float, h: float) -> str:
+    """Summing junction: a circle with a diagonal cross."""
+    cx, cy, k = x + w / 2, y + h / 2, 0.5 ** 0.5 / 2
+    dx, dy = w * k, h * k
+    return (
+        _ellipse_path(x, y, w, h)
+        + f" M {_xy((cx - dx, cy - dy))} L {_xy((cx + dx, cy + dy))}"
+        + f" M {_xy((cx + dx, cy - dy))} L {_xy((cx - dx, cy + dy))}"
+    )
+
+
+def _circle_plus_path(x: float, y: float, w: float, h: float) -> str:
+    """Or: a circle with an upright cross."""
     cx, cy = x + w / 2, y + h / 2
     return (
-        f"M {fmt(cx)} {fmt(y)} "
-        f"L {fmt(x + w)} {fmt(cy)} "
-        f"L {fmt(cx)} {fmt(y + h)} "
-        f"L {fmt(x)} {fmt(cy)} Z"
+        _ellipse_path(x, y, w, h)
+        + f" M {_xy((cx, y))} L {_xy((cx, y + h))} M {_xy((x, cy))} L {_xy((x + w, cy))}"
     )
+
+
+def _diamond_path(x: float, y: float, w: float, h: float) -> str:
+    cx, cy = x + w / 2, y + h / 2
+    return _poly((cx, y), (x + w, cy), (cx, y + h), (x, cy))
 
 
 def _triangle_path(x: float, y: float, w: float, h: float) -> str:
-    return (
-        f"M {fmt(x + w / 2)} {fmt(y)} "
-        f"L {fmt(x + w)} {fmt(y + h)} "
-        f"L {fmt(x)} {fmt(y + h)} Z"
-    )
+    return _poly((x + w / 2, y), (x + w, y + h), (x, y + h))
+
+
+def _down_triangle_path(x: float, y: float, w: float, h: float) -> str:
+    return _poly((x, y), (x + w, y), (x + w / 2, y + h))
+
+
+def _parallelogram(k: float) -> Callable[[float, float, float, float], str]:
+    """Atlassian's geometry: the top edge spans the box and the bottom edge
+    is shifted by k * h, so the shape overhangs its box by that much."""
+
+    def path(x: float, y: float, w: float, h: float) -> str:
+        s = k * h
+        return _poly((x, y), (x + w, y), (x + w + s, y + h), (x + s, y + h))
+
+    return path
+
+
+PARALLELOGRAM_SKEW = 0.2
 
 
 def _hexagon_path(x: float, y: float, w: float, h: float) -> str:
     inset = min(w * 0.20, 32.0)
     cy = y + h / 2
+    return _poly((x + inset, y), (x + w - inset, y), (x + w, cy),
+                 (x + w - inset, y + h), (x + inset, y + h), (x, cy))
+
+
+def _off_page_path(x: float, y: float, w: float, h: float) -> str:
+    """Off-page connector: a box ending in a downward point."""
+    return _poly((x, y), (x + w, y), (x + w, y + h * 0.75), (x + w / 2, y + h), (x, y + h * 0.75))
+
+
+def _predefined_process_path(x: float, y: float, w: float, h: float) -> str:
+    """A box with an inner bar on each side."""
+    b = min(w * 0.1, 20.0)
     return (
-        f"M {fmt(x + inset)} {fmt(y)} "
-        f"L {fmt(x + w - inset)} {fmt(y)} "
-        f"L {fmt(x + w)} {fmt(cy)} "
-        f"L {fmt(x + w - inset)} {fmt(y + h)} "
-        f"L {fmt(x + inset)} {fmt(y + h)} "
-        f"L {fmt(x)} {fmt(cy)} Z"
+        _poly((x, y), (x + w, y), (x + w, y + h), (x, y + h))
+        + f" M {_xy((x + b, y))} L {_xy((x + b, y + h))}"
+        + f" M {_xy((x + w - b, y))} L {_xy((x + w - b, y + h))}"
     )
 
 
-def _pentagon_path(x: float, y: float, w: float, h: float) -> str:
-    cx = x + w / 2
-    notch = h * 0.30
+def _internal_storage_path(x: float, y: float, w: float, h: float) -> str:
+    """A box with an inner bar along its top and its left side."""
+    b = min(w * 0.1, h * 0.2, 20.0)
     return (
-        f"M {fmt(cx)} {fmt(y)} "
-        f"L {fmt(x + w)} {fmt(y + notch)} "
-        f"L {fmt(x + w * 0.85)} {fmt(y + h)} "
-        f"L {fmt(x + w * 0.15)} {fmt(y + h)} "
-        f"L {fmt(x)} {fmt(y + notch)} Z"
+        _poly((x, y), (x + w, y), (x + w, y + h), (x, y + h))
+        + f" M {_xy((x + b, y))} L {_xy((x + b, y + h))}"
+        + f" M {_xy((x, y + b))} L {_xy((x + w, y + b))}"
     )
 
 
-def _octagon_path(x: float, y: float, w: float, h: float) -> str:
-    inset_x = min(w * 0.30, 40.0)
-    inset_y = min(h * 0.30, 40.0)
+def _manual_input_path(x: float, y: float, w: float, h: float) -> str:
+    """A box whose top edge slopes up to the right."""
+    return _poly((x, y + h * 0.25), (x + w, y), (x + w, y + h), (x, y + h))
+
+
+def _manual_operation_path(x: float, y: float, w: float, h: float) -> str:
+    """A trapezoid, wide edge on top."""
+    inset = min(w * 0.15, 32.0)
+    return _poly((x, y), (x + w, y), (x + w - inset, y + h), (x + inset, y + h))
+
+
+def _comment(left: bool) -> Callable[[float, float, float, float], str]:
+    """Annotation: an open bracket on one side of the text."""
+
+    def path(x: float, y: float, w: float, h: float) -> str:
+        arm = min(w * 0.15, 24.0)
+        if left:
+            return f"M {_xy((x + arm, y))} L {_xy((x, y))} L {_xy((x, y + h))} L {_xy((x + arm, y + h))}"
+        return f"M {_xy((x + w - arm, y))} L {_xy((x + w, y))} L {_xy((x + w, y + h))} L {_xy((x + w - arm, y + h))}"
+
+    return path
+
+
+def _stored_data_path(x: float, y: float, w: float, h: float) -> str:
+    """Both sides curve left: convex on the left, concave on the right."""
+    r = min(w * 0.12, h * 0.3)
     return (
-        f"M {fmt(x + inset_x)} {fmt(y)} "
-        f"L {fmt(x + w - inset_x)} {fmt(y)} "
-        f"L {fmt(x + w)} {fmt(y + inset_y)} "
-        f"L {fmt(x + w)} {fmt(y + h - inset_y)} "
-        f"L {fmt(x + w - inset_x)} {fmt(y + h)} "
-        f"L {fmt(x + inset_x)} {fmt(y + h)} "
-        f"L {fmt(x)} {fmt(y + h - inset_y)} "
-        f"L {fmt(x)} {fmt(y + inset_y)} Z"
+        f"M {_xy((x + r, y))} L {_xy((x + w, y))} "
+        f"Q {_xy((x + w - 2 * r, y + h / 2))} {_xy((x + w, y + h))} "
+        f"L {_xy((x + r, y + h))} "
+        f"Q {_xy((x - r, y + h / 2))} {_xy((x + r, y))} Z"
     )
 
 
-def _parallelogram_path(x: float, y: float, w: float, h: float) -> str:
-    skew = min(w * 0.18, 32.0)
+def _delay_path(x: float, y: float, w: float, h: float) -> str:
+    """Flat left side, semicircular right side."""
+    r = min(w / 2, h / 2)
     return (
-        f"M {fmt(x + skew)} {fmt(y)} "
-        f"L {fmt(x + w)} {fmt(y)} "
-        f"L {fmt(x + w - skew)} {fmt(y + h)} "
-        f"L {fmt(x)} {fmt(y + h)} Z"
+        f"M {_xy((x, y))} L {_xy((x + w - r, y))} "
+        f"A {fmt(r)} {fmt(h / 2)} 0 0 1 {_xy((x + w - r, y + h))} "
+        f"L {_xy((x, y + h))} Z"
     )
 
 
-def _trapezoid_path(x: float, y: float, w: float, h: float) -> str:
-    inset = min(w * 0.18, 32.0)
+def _display_path(x: float, y: float, w: float, h: float) -> str:
+    """Pointed left side, rounded right side."""
+    p = min(w * 0.15, h / 2)
+    r = min(w * 0.15, h / 2)
     return (
-        f"M {fmt(x + inset)} {fmt(y)} "
-        f"L {fmt(x + w - inset)} {fmt(y)} "
-        f"L {fmt(x + w)} {fmt(y + h)} "
-        f"L {fmt(x)} {fmt(y + h)} Z"
+        f"M {_xy((x, y + h / 2))} L {_xy((x + p, y))} L {_xy((x + w - r, y))} "
+        f"A {fmt(r)} {fmt(h / 2)} 0 0 1 {_xy((x + w - r, y + h))} "
+        f"L {_xy((x + p, y + h))} Z"
     )
 
 
 def _note_path(x: float, y: float, w: float, h: float) -> str:
-    """Sticky note with folded corner top-right."""
+    """Note with a folded corner top-right."""
     fold = min(w * 0.15, h * 0.20, 22.0)
     return (
-        f"M {fmt(x)} {fmt(y)} "
-        f"L {fmt(x + w - fold)} {fmt(y)} "
-        f"L {fmt(x + w)} {fmt(y + fold)} "
-        f"L {fmt(x + w)} {fmt(y + h)} "
-        f"L {fmt(x)} {fmt(y + h)} Z "
-        f"M {fmt(x + w - fold)} {fmt(y)} "
-        f"L {fmt(x + w - fold)} {fmt(y + fold)} "
-        f"L {fmt(x + w)} {fmt(y + fold)}"
+        _poly((x, y), (x + w - fold, y), (x + w, y + fold), (x + w, y + h), (x, y + h))
+        + f" M {_xy((x + w - fold, y))} L {_xy((x + w - fold, y + fold))} L {_xy((x + w, y + fold))}"
     )
 
 
 def _document_path(x: float, y: float, w: float, h: float) -> str:
-    """Document with wavy bottom edge."""
+    """Document with a wavy bottom edge."""
     wave = min(h * 0.12, 22.0)
     return (
         f"M {fmt(x)} {fmt(y)} "
@@ -183,95 +362,80 @@ def _cloud_path(x: float, y: float, w: float, h: float) -> str:
     )
 
 
-def _star_path(x: float, y: float, w: float, h: float) -> str:
-    """Five-pointed star inscribed in the bbox."""
-    cx, cy = x + w / 2, y + h / 2
-    rx, ry = w / 2, h / 2
-    inner_x, inner_y = rx * 0.40, ry * 0.40
-    pts: list[str] = []
-    for i in range(10):
-        angle = -math.pi / 2 + i * math.pi / 5
-        r_x = rx if i % 2 == 0 else inner_x
-        r_y = ry if i % 2 == 0 else inner_y
-        px = cx + math.cos(angle) * r_x
-        py = cy + math.sin(angle) * r_y
-        pts.append(f"{fmt(px)} {fmt(py)}")
-    return "M " + " L ".join(pts) + " Z"
-
-
-# Registry of stereotype-name → path-generator. Add new ones here.
-GENERATORS: dict[str, Callable[[float, float, float, float], str]] = {
-    "cylinder": _cylinder_path,
-    "ellipse": _ellipse_path,
-    "diamond": _diamond_path,
-    "triangle": _triangle_path,
-    "hexagon": _hexagon_path,
-    "pentagon": _pentagon_path,
-    "octagon": _octagon_path,
-    "parallelogram": _parallelogram_path,
-    "trapezoid": _trapezoid_path,
-    "note": _note_path,
-    "document": _document_path,
-    "cloud": _cloud_path,
-    "star": _star_path,
+# Stereotypes drawn as <rect>, by corner radius. Atlassian rounds its
+# rounded rectangle at a tenth of the width.
+RECT_RADIUS: dict[str, Callable[[float, float], float]] = {
+    "rect": lambda w, h: 0.0,
+    "rounded-rect": lambda w, h: min(0.1 * w, h / 2),
+    "stadium": lambda w, h: min(w, h) / 2,
 }
 
+# Stereotypes drawn as <path>.
+GENERATORS: dict[str, Callable[[float, float, float, float], str]] = {
+    "ellipse": _ellipse_path,
+    "circle-cross": _circle_cross_path,
+    "circle-plus": _circle_plus_path,
+    "diamond": _diamond_path,
+    "triangle": _triangle_path,
+    "down-triangle": _down_triangle_path,
+    "left-parallelogram": _parallelogram(PARALLELOGRAM_SKEW),
+    "right-parallelogram": _parallelogram(-PARALLELOGRAM_SKEW),
+    "hexagon": _hexagon_path,
+    "cylinder": _cylinder_path,
+    "hard-disk": _hard_disk_path,
+    "document": _document_path,
+    "off-page": _off_page_path,
+    "predefined-process": _predefined_process_path,
+    "internal-storage": _internal_storage_path,
+    "manual-input": _manual_input_path,
+    "manual-operation": _manual_operation_path,
+    "comment-left": _comment(left=True),
+    "comment-right": _comment(left=False),
+    "stored-data": _stored_data_path,
+    "delay": _delay_path,
+    "display": _display_path,
+    "note": _note_path,
+    "cloud": _cloud_path,
+}
 
-STEREOTYPES: frozenset[str] = frozenset({"rect", *GENERATORS})
-
-
-# Per-stereotype text inset (top, right, bottom, left in fractions of w/h)
-# so foreignObject text avoids curved or cut-off regions of the shape.
-def text_inset(name: str, w: float, h: float) -> tuple[float, float, float, float]:
-    if name == "cylinder":
-        e = min(h * 0.14, 22.0)
-        return (e, 0.0, e, 0.0)
-    if name == "ellipse":
-        return (h * 0.15, w * 0.15, h * 0.15, w * 0.15)
-    if name == "diamond":
-        return (h * 0.25, w * 0.25, h * 0.25, w * 0.25)
-    if name == "triangle":
-        return (h * 0.45, w * 0.20, 0.0, w * 0.20)
-    if name == "hexagon":
-        inset = min(w * 0.20, 32.0)
-        return (0.0, inset, 0.0, inset)
-    if name == "pentagon":
-        return (h * 0.10, w * 0.15, h * 0.05, w * 0.15)
-    if name == "octagon":
-        inset_x = min(w * 0.20, 28.0)
-        inset_y = min(h * 0.20, 28.0)
-        return (inset_y, inset_x, inset_y, inset_x)
-    if name == "parallelogram":
-        skew = min(w * 0.18, 32.0)
-        return (0.0, skew, 0.0, skew)
-    if name == "trapezoid":
-        inset = min(w * 0.18, 32.0)
-        return (0.0, inset, 0.0, inset)
-    if name == "note":
-        fold = min(w * 0.15, h * 0.20, 22.0)
-        return (0.0, fold, 0.0, 0.0)
-    if name == "document":
-        wave = min(h * 0.12, 22.0)
-        return (0.0, 0.0, wave, 0.0)
-    if name == "cloud":
-        return (h * 0.18, w * 0.10, h * 0.18, w * 0.10)
-    if name == "star":
-        return (h * 0.30, w * 0.30, h * 0.30, w * 0.30)
-    return (0.0, 0.0, 0.0, 0.0)
+STEREOTYPES: frozenset[str] = frozenset({*RECT_RADIUS, *GENERATORS})
 
 
-def outline(
-    kind: int | None,
-    x: float,
-    y: float,
-    w: float,
-    h: float,
-    shape_map: dict[int, str],
-) -> tuple[str, str]:
-    """Returns (svg_d, stereotype_name). svg_d is empty for plain rect (caller
-    should emit <rect> instead of <path>)."""
-    name = shape_map.get(kind if kind is not None else -1, "rect")
-    gen = GENERATORS.get(name)
-    if gen is None:
-        return "", "rect"
-    return gen(x, y, w, h), name
+# ----------------------------------------------------------------- text areas
+
+
+def text_inset(name: str, w: float, h: float) -> Inset:
+    """Margins (top, right, bottom, left) that keep text inside the outline."""
+    inset = _INSETS.get(name)
+    return inset(w, h) if inset else (0.0, 0.0, 0.0, 0.0)
+
+
+def _even(fx: float, fy: float) -> Callable[[float, float], Inset]:
+    return lambda w, h: (h * fy, w * fx, h * fy, w * fx)
+
+
+_INSETS: dict[str, Callable[[float, float], Inset]] = {
+    "stadium": lambda w, h: (0.0, min(w, h) * 0.3, 0.0, min(w, h) * 0.3),
+    "ellipse": _even(0.15, 0.15),
+    "circle-cross": _even(0.15, 0.15),
+    "circle-plus": _even(0.15, 0.15),
+    "diamond": _even(0.25, 0.25),
+    "triangle": lambda w, h: (h * 0.45, w * 0.20, 0.0, w * 0.20),
+    "down-triangle": lambda w, h: (0.0, w * 0.20, h * 0.45, w * 0.20),
+    "left-parallelogram": lambda w, h: (0.0, 0.0, 0.0, PARALLELOGRAM_SKEW * h),
+    "right-parallelogram": lambda w, h: (0.0, PARALLELOGRAM_SKEW * h, 0.0, 0.0),
+    "hexagon": lambda w, h: (0.0, min(w * 0.20, 32.0), 0.0, min(w * 0.20, 32.0)),
+    "cylinder": lambda w, h: (min(h * 0.14, 22.0), 0.0, min(h * 0.14, 22.0), 0.0),
+    "hard-disk": lambda w, h: (0.0, 2 * min(w * 0.12, 22.0), 0.0, min(w * 0.12, 22.0)),
+    "document": lambda w, h: (0.0, 0.0, min(h * 0.12, 22.0), 0.0),
+    "off-page": lambda w, h: (0.0, 0.0, h * 0.25, 0.0),
+    "predefined-process": lambda w, h: (0.0, min(w * 0.1, 20.0), 0.0, min(w * 0.1, 20.0)),
+    "internal-storage": lambda w, h: (min(w * 0.1, h * 0.2, 20.0), 0.0, 0.0, min(w * 0.1, h * 0.2, 20.0)),
+    "manual-input": lambda w, h: (h * 0.25, 0.0, 0.0, 0.0),
+    "manual-operation": lambda w, h: (0.0, min(w * 0.15, 32.0), 0.0, min(w * 0.15, 32.0)),
+    "stored-data": lambda w, h: (0.0, min(w * 0.12, h * 0.3), 0.0, min(w * 0.12, h * 0.3)),
+    "delay": lambda w, h: (0.0, min(w / 2, h / 2) * 0.3, 0.0, 0.0),
+    "display": lambda w, h: (0.0, min(w * 0.15, h / 2) * 0.3, 0.0, min(w * 0.15, h / 2)),
+    "note": lambda w, h: (0.0, min(w * 0.15, h * 0.20, 22.0), 0.0, 0.0),
+    "cloud": _even(0.10, 0.18),
+}

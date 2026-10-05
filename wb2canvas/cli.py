@@ -11,6 +11,7 @@ import click
 from dotenv import find_dotenv, load_dotenv
 
 from .model import BoardMeta
+from .shapes import KIND_BY_NAME, STEREOTYPES
 from .storage import dump_path
 
 if TYPE_CHECKING:
@@ -299,9 +300,9 @@ def extract(
     "--shape-map",
     "shape_map_str",
     default="",
-    help="(svg/html) Override stereotype mapping. Format: '4=ellipse,5=diamond,11=note'. "
-         "Supported names: rect cylinder ellipse diamond triangle hexagon pentagon "
-         "octagon parallelogram trapezoid note document cloud star.",
+    help="(svg/html) Override how shape kinds are drawn, by kind number or name: "
+         "'database=hard-disk,60=ellipse'. Kinds are listed in docs/confluence-whiteboard-model.md. "
+         "Stereotypes: " + " ".join(sorted(STEREOTYPES)) + ".",
 )
 @click.pass_context
 def convert(
@@ -452,28 +453,23 @@ def _echo_results(results: list[Written]) -> None:
 
 
 def _parse_shape_map(s: str) -> dict[int, str]:
-    """Parse '4=ellipse,5=diamond' into {4: 'ellipse', 5: 'diamond'}."""
-    from .shapes import STEREOTYPES
-
-    known = set(STEREOTYPES)
+    """Parse 'database=hard-disk,60=ellipse' into {13: 'hard-disk', 60: 'ellipse'}."""
     out: dict[int, str] = {}
     for entry in s.split(","):
         entry = entry.strip()
         if not entry:
             continue
         if "=" not in entry:
-            raise click.BadParameter(f"--shape-map entry {entry!r} missing '=' (e.g. '4=ellipse')")
-        k, _, v = entry.partition("=")
-        try:
-            kind = int(k.strip())
-        except ValueError as e:
-            raise click.BadParameter(f"--shape-map key {k!r} is not an integer") from e
-        name = v.strip()
-        if name not in known:
+            raise click.BadParameter(f"--shape-map entry {entry!r} missing '=' (e.g. 'database=hard-disk')")
+        k, _, v = (part.strip() for part in entry.partition("="))
+        kind = int(k) if k.isdigit() else KIND_BY_NAME.get(k)
+        if kind is None:
+            raise click.BadParameter(f"--shape-map key {k!r} is neither a kind number nor a kind name")
+        if v not in STEREOTYPES:
             raise click.BadParameter(
-                f"--shape-map name {name!r} is unknown; choose from: {', '.join(sorted(known))}"
+                f"--shape-map name {v!r} is unknown; choose from: {', '.join(sorted(STEREOTYPES))}"
             )
-        out[kind] = name
+        out[kind] = v
     return out
 
 

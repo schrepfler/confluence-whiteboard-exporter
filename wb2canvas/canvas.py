@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import json
+import logging
+from collections import Counter
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .board import CANVAS_METRICS, Board, Kind, Node, Rgb, anchor_side, layout
 
+log = logging.getLogger(__name__)
+
 Side = Literal["top", "right", "bottom", "left"]
+End = Literal["none", "arrow"]
+
+# JSON Canvas has one line-end marker; every arrowhead maps to it.
+ARROW_CAPS = frozenset({"arrow", "filled-arrow", "open-arrow"})
 
 
 class CanvasNode(BaseModel):
@@ -80,23 +88,44 @@ def render_canvas(
     from the vault root rather than from the canvas file."""
     boxes = layout(board, CANVAS_METRICS)
     nodes = [_node(n, boxes[n.id], vault_prefix) for n in board.nodes]
-    edges = [
-        CanvasEdge(
+    dropped_caps: Counter[str] = Counter()
+    edges: list[CanvasEdge] = []
+    loose = 0
+    for e in board.edges:
+        if not (e.source and e.target):  # JSON Canvas edges must join two nodes
+            loose += 1
+            continue
+        edges.append(CanvasEdge(
             id=e.id,
             fromNode=e.source,
             toNode=e.target,
             fromSide=anchor_side(e.source_anchor),
             toSide=anchor_side(e.target_anchor),
-            fromEnd="arrow" if e.start_arrow else "none",
-            toEnd="arrow" if e.end_arrow else "none",
+            fromEnd=_end(e.start_cap, dropped_caps),
+            toEnd=_end(e.end_cap, dropped_caps),
             color=e.color.hex if e.color else None,
-        )
-        for e in board.edges
-        if e.source and e.target  # JSON Canvas edges must join two nodes
-    ]
+        ))
+    _warn(board, loose, dropped_caps)
     if resolve_collisions:
         push_apart(nodes)
     return CanvasDoc(nodes=nodes, edges=edges)
+
+
+def _end(cap: str, dropped: Counter[str]) -> End:
+    if cap in ARROW_CAPS:
+        return "arrow"
+    if cap != "none":
+        dropped[cap] += 1
+    return "none"
+
+
+def _warn(board: Board, loose: int, dropped_caps: Counter[str]) -> None:
+    where = f"board {board.meta.boardId} canvas"
+    if loose:
+        log.warning("%s: omitted %d connector(s) with an end not attached to an element", where, loose)
+    if dropped_caps:
+        caps = ", ".join(f"{n} {c}" for c, n in sorted(dropped_caps.items()))
+        log.warning("%s: JSON Canvas has no such line ends; drawn plain: %s", where, caps)
 
 
 def _node(n: Node, box: tuple[float, float, float, float], vault_prefix: str) -> CanvasNode:
@@ -118,7 +147,7 @@ def _identity_colour(n: Node) -> Rgb | None:
     an unfilled shape by its outline, a filled shape by its fill."""
     if n.kind is Kind.TEXT:
         return n.color
-    return n.fill or n.stroke
+    return n.fill or (n.stroke if n.stroke_style != "none" else None)
 
 
 def _color(c: Rgb | None) -> str | None:

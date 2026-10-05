@@ -9,16 +9,20 @@ SVG file, so it must sit next to `media/`.
 
 from __future__ import annotations
 
+import logging
 import math
+from collections import Counter
 
 from .adf import _xml_escape
 from .board import SVG_METRICS, Board, Box, Edge, Kind, Node, Point, Rgb, anchor_point, anchor_side, layout
-from .shapes import DEFAULT_SHAPE_MAP, fmt, outline, text_inset
+from .connectors import ARROWHEAD_SCALE, ARROWHEADS, End, Route, end_stub, route, thickness
+from .shapes import DEFAULT_SHAPE_MAP, fmt, kind_label, outline, stereotype, text_inset
+
+log = logging.getLogger(__name__)
 
 DEFAULT_STROKE = "#172B4D"
 EDGE_DEFAULT_STROKE = "#758195"
 MARGIN = 60
-RX = 8
 BASE_FONT_PX = 13.0
 
 
@@ -43,9 +47,27 @@ class _Bounds:
 
 
 def render_svg(board: Board, shape_map: dict[int, str] | None = None) -> str:
+    svg, unmapped = svg_document(board, shape_map)
+    warn_unmapped("svg", board, unmapped)
+    return svg
+
+
+def warn_unmapped(fmt_name: str, board: Board, unmapped: Counter[int | None]) -> None:
+    if unmapped:
+        counts = sorted(unmapped.items(), key=lambda kv: kv[0] or 0)
+        kinds = ", ".join(kind_label(k) + (f" x{n}" if n > 1 else "") for k, n in counts)
+        log.warning("board %s %s: no stereotype for shape kinds %s; drawn as rectangles",
+                    board.meta.boardId, fmt_name, kinds)
+
+
+def svg_document(board: Board, shape_map: dict[int, str] | None = None) -> tuple[str, Counter[int | None]]:
+    """The SVG markup, and how many shapes of each kind had no stereotype."""
     smap = {**DEFAULT_SHAPE_MAP, **(shape_map or {})}
     boxes = layout(board, SVG_METRICS)
     bounds = _Bounds()
+    unmapped: Counter[int | None] = Counter(
+        n.shape_kind for n in board.nodes if n.kind is Kind.SHAPE and stereotype(n.shape_kind, smap) is None
+    )
 
     # Nodes in source z-order; connectors last so arrowheads stay on top.
     node_parts: list[str] = []
@@ -59,36 +81,64 @@ def render_svg(board: Board, shape_map: dict[int, str] | None = None) -> str:
         if markup := _render_node(node, box, smap):
             node_parts.append(markup)
     edge_parts = [m for e in board.edges if (m := _render_edge(e, boxes, bounds))]
+    caps = {(c, e.stroke_size) for e in board.edges for c in (e.start_cap, e.end_cap) if c in ARROWHEADS}
 
     if bounds.empty:
-        return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"></svg>'
+        empty = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"></svg>'
+        return empty, unmapped
     vb_x = math.floor(bounds.x0 - MARGIN)
     vb_y = math.floor(bounds.y0 - MARGIN)
     vb_w = math.ceil(bounds.x1 - bounds.x0 + 2 * MARGIN)
     vb_h = math.ceil(bounds.y1 - bounds.y0 + 2 * MARGIN)
-    return "\n".join(
+    svg = "\n".join(
         [
             f'<svg xmlns="http://www.w3.org/2000/svg" '
             f'viewBox="{vb_x} {vb_y} {vb_w} {vb_h}" width="{vb_w}" height="{vb_h}" '
             f'font-family="-apple-system, BlinkMacSystemFont, \'Segoe UI\', sans-serif" '
             f'font-size="{fmt(BASE_FONT_PX)}">',
-            _DEFS,
+            _defs(caps),
             _STYLE,
             *node_parts,
             *edge_parts,
             "</svg>",
         ]
     )
+    return svg, unmapped
 
 
-_DEFS = (
-    "<defs>"
-    '<marker id="arrow" viewBox="0 0 12 12" refX="11" refY="6" '
-    'markerWidth="8" markerHeight="8" orient="auto-start-reverse">'
-    '<path d="M 0 0 L 12 6 L 0 12 z" fill="context-stroke" />'
-    "</marker>"
-    "</defs>"
-)
+def _defs(caps: set[tuple[str, int]]) -> str:
+    return "<defs>" + "".join(_marker(name, size) for name, size in sorted(caps)) + "</defs>"
+
+
+def _marker_id(cap: str, stroke_size: int) -> str:
+    return f"cap-{cap}-{stroke_size}"
+
+
+def _marker(name: str, stroke_size: int) -> str:
+    """One line end, in board units, with its origin where the drawn line
+    stops: the true end, or the start of the stretch hidden under it."""
+    head = ARROWHEADS[name]
+    k = ARROWHEAD_SCALE.get(stroke_size, 1.0)
+    w, h = head.size[0] * k, head.size[1] * k
+    shift = head.offset * k * (-1 if head.line_visible else 1)
+
+    def at(x: float, y: float) -> str:
+        return f"{fmt(shift + (x - 0.5) * w)} {fmt(y * h)}"
+
+    parts = [f"M {at(*line[0])} " + " ".join(f"L {at(*q)}" for q in line[1:]) for line in head.lines]
+    parts += [f"M {at(*poly[0])} " + " ".join(f"L {at(*q)}" for q in poly[1:]) + " Z" for poly in head.polygons]
+    for cx, cy, rx, ry in head.ellipses:
+        r = f"{fmt(rx * w)} {fmt(ry * h)} 0 1 0"
+        parts.append(f"M {at(cx + rx, cy)} A {r} {at(cx - rx, cy)} A {r} {at(cx + rx, cy)} Z")
+    fill = "context-stroke" if head.filled else "none"
+    return (
+        f'<marker id="{_marker_id(name, stroke_size)}" markerUnits="userSpaceOnUse" viewBox="-48 -24 96 48" '
+        f'refX="0" refY="0" markerWidth="96" markerHeight="48" orient="auto-start-reverse" overflow="visible">'
+        f'<path d="{" ".join(parts)}" fill="{fill}" stroke="context-stroke" '
+        f'stroke-width="{fmt(thickness(stroke_size))}" stroke-linejoin="round" stroke-linecap="round"/>'
+        "</marker>"
+    )
+
 
 # .node-text fills its foreignObject and clips; .node-body is centred with
 # auto margins, which (unlike justify-content:center) collapse to zero when
@@ -123,11 +173,10 @@ def _render_node(node: Node, box: Box, smap: dict[int, str]) -> str:
         inner = f'<image x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}" href="{href}"/>'
     elif node.kind is Kind.LINE and len(node.points) == 2:
         (x1, y1), (x2, y2) = node.points
-        width = max(1.0, node.stroke_width) * 1.5
+        width = thickness(int(node.stroke_width))
         return (
             f'<line x1="{fmt(x1)}" y1="{fmt(y1)}" x2="{fmt(x2)}" y2="{fmt(y2)}" '
-            f'stroke="{_hex(node.stroke, EDGE_DEFAULT_STROKE)}" stroke-width="{fmt(width)}" '
-            f"{_dash(node.dashed, width)}/>"
+            f'{_stroke(node.stroke_style, _hex(node.stroke, EDGE_DEFAULT_STROKE), width)}/>'
         )
     else:
         return ""
@@ -147,19 +196,19 @@ def _shape(node: Node, box: Box, smap: dict[int, str]) -> str:
     if w <= 0 or h <= 0:
         return ""
     fill = node.fill.hex if node.fill else "transparent"
-    stroke = _hex(node.stroke, DEFAULT_STROKE)
-    stroke_w = max(1.0, node.stroke_width) * 1.5
-    dash = _dash(node.dashed, stroke_w)
-    d, name = outline(node.shape_kind, x, y, w, h, smap)
-    if name == "rect":
+    stroke = _stroke(node.stroke_style, _hex(node.stroke, DEFAULT_STROKE), max(1.0, node.stroke_width) * 1.5)
+    shape_outline = outline(node.shape_kind, x, y, w, h, smap)
+    if shape_outline.is_rect:
+        r = fmt(shape_outline.radius)
+        corners = f'rx="{r}" ry="{r}" ' if shape_outline.radius else ""
         shape = (
             f'<rect x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}" '
-            f'rx="{RX}" ry="{RX}" fill="{fill}" stroke="{stroke}" stroke-width="{fmt(stroke_w)}" {dash}/>'
+            f'{corners}fill="{fill}" {stroke}/>'
         )
     else:
-        shape = f'<path d="{d}" fill="{fill}" stroke="{stroke}" stroke-width="{fmt(stroke_w)}" {dash}/>'
+        shape = f'<path d="{shape_outline.d}" fill="{fill}" {stroke}/>'
 
-    top, right, bottom, left = text_inset(name, w, h)
+    top, right, bottom, left = text_inset(shape_outline.name, w, h)
     tw, th = w - left - right, h - top - bottom
     if not node.html or tw <= 0 or th <= 0:
         return shape
@@ -190,61 +239,57 @@ def _free_text(node: Node, box: Box) -> str:
 
 
 def _render_edge(edge: Edge, boxes: dict[str, Box], bounds: _Bounds) -> str:
-    # The recorded start/end are sometimes internal control points rather
-    # than edge anchors, so they are only a fallback for a missing end.
+    # The recorded start/end are computed from a stale element size, so they
+    # are only a fallback for an end that is not attached to an element.
     src = anchor_point(boxes[edge.source], edge.source_anchor) if edge.source else edge.start
     tgt = anchor_point(boxes[edge.target], edge.target_anchor) if edge.target else edge.end
     if src is None or tgt is None:
         return ""
-    pts = curve_points(src, tgt, anchor_side(edge.source_anchor), anchor_side(edge.target_anchor))
-    for p in pts:  # a cubic Bezier lies inside the hull of its control points
+    start = End(src, anchor_side(edge.source_anchor) if edge.source else None, edge.start_cap)
+    end = End(tgt, anchor_side(edge.target_anchor) if edge.target else None, edge.end_cap)
+    path = route(edge.routing, start, end, edge.waypoints, edge.stroke_size)
+    for p in path.points():
         bounds.point(*p)
-    (sx, sy), (c1x, c1y), (c2x, c2y), (ex, ey) = pts
-    d = f"M {fmt(sx)} {fmt(sy)} C {fmt(c1x)} {fmt(c1y)}, {fmt(c2x)} {fmt(c2y)}, {fmt(ex)} {fmt(ey)}"
 
-    width = max(1.0, edge.width) * 1.5
     sa, ta = edge.source_anchor, edge.target_anchor
-    markers = (' marker-start="url(#arrow)"' if edge.start_arrow else "") + (
-        ' marker-end="url(#arrow)"' if edge.end_arrow else ""
+    markers = "".join(
+        f' {attr}="url(#{_marker_id(cap, edge.stroke_size)})"'
+        for attr, cap in (("marker-start", edge.start_cap), ("marker-end", edge.end_cap))
+        if cap in ARROWHEADS
     )
+    (s_ext, s_hide), (t_ext, t_hide) = end_stub(edge.start_cap, edge.stroke_size), end_stub(edge.end_cap, edge.stroke_size)
+    stroke = _stroke(edge.stroke_style, _hex(edge.color, EDGE_DEFAULT_STROKE), thickness(edge.stroke_size))
     return (
         f'<path class="wb-edge" data-src="{_xml_escape(edge.source or "")}" '
         f'data-tgt="{_xml_escape(edge.target or "")}" '
         f'data-sa="{fmt(sa[0])},{fmt(sa[1])}" data-ta="{fmt(ta[0])},{fmt(ta[1])}" '
-        f'd="{d}" stroke="{_hex(edge.color, EDGE_DEFAULT_STROKE)}" stroke-width="{fmt(width)}" '
-        f'fill="none" {_dash(edge.dashed, width)}{markers}/>'
+        f'data-routing="{edge.routing}" data-wp="{" ".join(f"{fmt(x)},{fmt(y)}" for x, y in edge.waypoints)}" '
+        f'data-ends="{fmt(s_ext)},{int(s_hide)},{fmt(t_ext)},{int(t_hide)}" '
+        f'd="{path_data(path)}" fill="none" {stroke}{markers}/>'
     )
 
 
-def curve_points(
-    src: Point, tgt: Point, s_side: str | None, t_side: str | None
-) -> tuple[Point, Point, Point, Point]:
-    """Cubic Bezier from src to tgt whose ends leave/enter perpendicular to
-    the anchored box edges, so arrowheads point straight at the box."""
-    dx, dy = tgt[0] - src[0], tgt[1] - src[1]
-    handle = max(40.0, max(abs(dx), abs(dy)) * 0.4)
-    return src, _handle(src, s_side, handle, dx, dy, True), _handle(tgt, t_side, handle, dx, dy, False), tgt
+def path_data(path: Route) -> str:
+    parts = [f"M {_xy(path.start)}"]
+    for seg in path.segments:
+        parts.append(f"L {_xy(seg[0])}" if len(seg) == 1 else "C " + ", ".join(_xy(p) for p in seg))
+    return " ".join(parts)
 
 
-def _handle(p: Point, side: str | None, h: float, dx: float, dy: float, leaving: bool) -> Point:
-    x, y = p
-    if side == "right":
-        return x + h, y
-    if side == "left":
-        return x - h, y
-    if side == "top":
-        return x, y - h
-    if side == "bottom":
-        return x, y + h
-    if abs(dx) >= abs(dy):
-        return (x + h if leaving else x - h), y
-    return x, (y + h if leaving else y - h)
+def _stroke(style: str, colour: str, width: float) -> str:
+    """Stroke attributes for a stroke style (none, solid, dashed, dotted)."""
+    if style == "none":
+        return 'stroke="none"'
+    attrs = f'stroke="{colour}" stroke-width="{fmt(width)}"'
+    if style == "dashed":
+        return attrs + f' stroke-dasharray="{fmt(max(4.0, width * 3))},{fmt(max(3.0, width * 2))}"'
+    if style == "dotted":  # zero-length dashes with round caps draw dots
+        return attrs + f' stroke-dasharray="0,{fmt(width * 2)}" stroke-linecap="round"'
+    return attrs
 
 
-def _dash(dashed: bool, stroke_w: float) -> str:
-    if not dashed:
-        return ""
-    return f'stroke-dasharray="{fmt(max(4.0, stroke_w * 3))},{fmt(max(3.0, stroke_w * 2))}" '
+def _xy(p: Point) -> str:
+    return f"{fmt(p[0])} {fmt(p[1])}"
 
 
 def _hex(c: Rgb | None, default: str) -> str:

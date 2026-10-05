@@ -22,6 +22,10 @@ loads them.
 `convert` works offline from the saved dump, so you can re-render without
 touching Confluence.
 
+[docs/confluence-whiteboard-model.md](docs/confluence-whiteboard-model.md)
+documents the whiteboard data model: element types, shape kinds, line ends
+and the property dictionary.
+
 | Module | Role |
 |---|---|
 | `discover.py` | Lists a space's whiteboards via the Confluence REST API |
@@ -29,7 +33,7 @@ touching Confluence.
 | `fiber_probe.js` | Injected into the board page to capture its content |
 | `model.py` | Schema of the raw dump file |
 | `board.py` | Normalises either kind of dump into one `Board`; layout and stable ids |
-| `canvas.py`, `svg.py`, `html.py` | Renderers; `shapes.py` holds stereotype geometry |
+| `canvas.py`, `svg.py`, `html.py` | Renderers; `shapes.py` holds stereotype geometry, `connectors.py` the editor's connector router and line ends |
 | `deploy.py` | Writes outputs, optionally into an Obsidian vault |
 
 ## Setup
@@ -81,22 +85,32 @@ re-extract or re-render. `-v` shows progress detail.
 ### Output formats
 
 - **canvas**: editable in Obsidian. JSON Canvas cannot express dashed
-  borders, shape stereotypes or freehand lines, so status is conveyed by
-  colour alone and dividers become thin cards.
-- **svg**: faithful static replica: outlines, dashes, stereotypes (e.g.
-  cylinders), coloured free text, curved connectors. Contains no script, so it
-  is safe to embed (`![[board.svg]]`) or attach.
+  borders, shape stereotypes, freehand lines, connector bends or line ends
+  other than arrows, so status is conveyed by colour alone and dividers
+  become thin cards.
+- **svg**: faithful static replica: shape stereotypes, dashed and dotted
+  outlines, coloured free text, connectors routed the way the editor routes
+  them (through their bend points), and the editor's line ends (arrows,
+  diamonds, crow's feet, ...). Contains no script, so it is safe to embed
+  (`![[board.svg]]`) or attach.
 - **html**: the same drawing with drag, pan and zoom. Open it in a browser.
+
+Anything a format cannot show is reported as a warning rather than dropped
+silently: element types not supported yet (stickies, sections, tables, ...),
+shape kinds without a stereotype, and line ends JSON Canvas lacks.
 
 SVG and HTML reference images relative to their own location, so keep them
 next to their `media/` folder.
 
 ### Shape stereotypes
 
-Confluence stores shapes as numeric kinds. Kind 3 (rectangle) and 13
-(cylinder) are confirmed; map others with `--shape-map '4=ellipse,5=diamond'`
-once you know their numbers. Available names are listed in
-`convert --help`.
+Confluence stores a shape's kind as a number. All 89 kinds, and how each is
+drawn, are listed in
+[docs/confluence-whiteboard-model.md](docs/confluence-whiteboard-model.md).
+The flowchart shapes have their own outlines; architecture icons and most UML
+shapes are drawn as rectangles. Override a mapping by kind name or number,
+e.g. `--shape-map 'database=hard-disk,60=ellipse'`. Stereotype names are
+listed in `convert --help`.
 
 ## Output layout
 

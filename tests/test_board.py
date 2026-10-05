@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import struct
 from pathlib import Path
 
@@ -134,13 +135,14 @@ def _fiber_board():
 def test_fiber_dump_uses_drawn_geometry_and_decodes_colours() -> None:
     board = _fiber_board()
     s1, s2 = board.node("S1"), board.node("S2")
-    assert (s1.x, s1.y, s1.w, s1.h) == (0, 20, 298, 144), "basis box, not the 160x160 size"
-    assert s1.fill is None and s1.stroke == Rgb(0, 85, 204) and s1.dashed
+    # Centred on p#; the basis box grew downward by twice the centre's shift.
+    assert (s1.x, s1.y, s1.w, s1.h) == (-149, -52, 298, 204), "basis box, not the 160x160 size"
+    assert s1.fill is None and s1.stroke == Rgb(0, 85, 204) and s1.stroke_style == "dashed"
     assert s2.fill == Rgb(10, 20, 30) and s2.shape_kind == 13
     assert [n.kind for n in board.nodes] == [Kind.SHAPE, Kind.SHAPE, Kind.IMAGE]
     assert board.node("I1").image.href == "media/abc.png"
     (edge,) = board.edges
-    assert (edge.source, edge.target, edge.end_arrow, edge.start_arrow) == ("S1", "S2", True, False)
+    assert (edge.source, edge.target, edge.start_cap, edge.end_cap) == ("S1", "S2", "none", "arrow")
 
 
 def test_fiber_dump_renders_in_every_format() -> None:
@@ -154,10 +156,28 @@ def test_fiber_dump_renders_in_every_format() -> None:
 # --------------------------------------------------------------------- layout
 
 
-def test_shapes_are_drawn_at_their_basis_box() -> None:
-    board = _clip({"type": "shape", "position": {"x": 10, "y": 50}, "size": {"x": 160, "y": 160},
-                   "basisPosition": {"x": 10, "y": 11}, "basisSize": {"x": 298, "y": 144}})
-    assert node_box(board.nodes[0], CANVAS_METRICS) == (10, 11, 298, 144)
+def test_shapes_are_centred_on_position_and_grown_from_their_basis_box() -> None:
+    # "Sources" on a sample board: its text grew it from 110.3
+    # to 188.5 high, top edge fixed; the stored 160x160 size is stale.
+    board = _clip({"type": "shape", "position": {"x": -1127.8, "y": -824.5}, "size": {"x": 160, "y": 160},
+                   "basisPosition": {"x": -1127.8, "y": -863.6}, "basisSize": {"x": 221.9, "y": 110.3}})
+    x, y, w, h = node_box(board.nodes[0], CANVAS_METRICS)
+    assert (x, w) == pytest.approx((-1127.8 - 221.9 / 2, 221.9))
+    assert (y, h) == pytest.approx((-863.6 - 110.3 / 2, 188.5))
+
+
+def test_images_are_centred_on_position() -> None:
+    board = _clip({"type": "image", "fileId": "f", "position": {"x": 100, "y": 50}, "size": {"x": 40, "y": 20}})
+    n = board.nodes[0]
+    assert (n.x, n.y, n.w, n.h) == (80, 40, 40, 20)
+
+
+@pytest.mark.parametrize(("align", "left"), [("left", 0.0), ("center", -1.0), ("right", -2.0)])
+def test_text_widens_away_from_its_aligned_edge(align: str, left: float) -> None:
+    board = _clip({"type": "text", "position": {"x": 5, "y": 5}, "basisPosition": {"x": 5, "y": 5},
+                   "basisSize": {"x": 10, "y": 10}, "alignment": align, "text": _text("Sample Text Here")})
+    x, _, w, _ = node_box(board.nodes[0], SVG_METRICS)
+    assert x == pytest.approx(left * (w - 10) / 2)
 
 
 def test_long_shape_text_wraps_and_grows_height_only() -> None:
@@ -172,11 +192,13 @@ def test_free_text_sizes_to_its_content_not_its_placeholder() -> None:
     adf = json.dumps({"type": "doc", "content": [{"type": "bulletList", "content": [
         {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": t}]}]}
         for t in ("First list item here", "Second & third item", "Fourth bullet")]}]})
-    board = _clip({"type": "text", "position": {"x": 5, "y": 6}, "size": {"x": 76, "y": 38},
+    # Sample values: left-aligned, so the basis box's left edge stays put.
+    board = _clip({"type": "text", "position": {"x": -1211.8, "y": -255.3}, "size": {"x": 76, "y": 38},
+                   "basisPosition": {"x": -1291.3, "y": -277.3}, "basisSize": {"x": 34, "y": 38},
                    "allowFlexibleWidth": True, "text": adf})
     x, y, w, h = node_box(board.nodes[0], SVG_METRICS)
-    assert (x, y) == (5, 6)
-    assert w > 76 * 2 and h > 38 * 1.5
+    assert (x, y) == pytest.approx((-1291.3 - 17, -277.3 - 19))
+    assert w >= 34 + 2 * 79.5 and h >= 38 + 2 * 22
 
 
 @pytest.mark.parametrize("scale", [1.5, 2.0])
@@ -186,3 +208,99 @@ def test_font_scale_grows_the_text_box(scale: float) -> None:
         return node_box(b.nodes[0], SVG_METRICS)
 
     assert box(scale)[2] > box(1.0)[2]
+
+
+# ------------------------------------------------------------------- losses
+
+
+def test_elements_it_cannot_draw_are_omitted_and_reported(caplog) -> None:
+    caplog.set_level(logging.WARNING)
+    board = _clip(
+        {"type": "shape", "position": {"x": 0, "y": 0}, "size": {"x": 10, "y": 10}},
+        {"type": "sticky", "position": {"x": 0, "y": 0}},
+        {"type": "sticky", "position": {"x": 9, "y": 9}},
+        {"type": "section", "position": {"x": 0, "y": 0}},
+    )
+    assert [n.kind for n in board.nodes] == [Kind.SHAPE]
+    (msg,) = [r.getMessage() for r in caplog.records]
+    assert "board 1" in msg and "1 section, 2 sticky" in msg
+
+
+def test_a_fully_drawn_board_reports_nothing(caplog) -> None:
+    caplog.set_level(logging.WARNING)
+    load_board(FIXTURE)
+    assert caplog.records == []
+
+
+def test_connector_styles_are_named(caplog) -> None:
+    board = _clip(
+        {"type": "shape", "position": {"x": 0, "y": 0}, "size": {"x": 10, "y": 10}},
+        {"type": "connector", "sourceIndex": 0, "targetIndex": 0, "startCap": 13, "endCap": 99,
+         "presentation": 2, "strokeStyle": 3},
+    )
+    (edge,) = board.edges
+    assert (edge.start_cap, edge.end_cap, edge.routing, edge.stroke_style) == (
+        "crows-foot", "none", "dynamic", "dotted")
+    assert any("line end 99" in r.getMessage() for r in caplog.records), "an unknown value is reported"
+
+
+def test_fiber_dump_reads_alignment_wrapping_and_routing(caplog) -> None:
+    caplog.set_level(logging.WARNING)
+    fiber = {
+        "board": {
+            "S": {"t": "shape", "sh": 2, "a": 2, "va": 0},
+            "T": {"t": "text", "a": 0, "fw": True},
+            "C": {"t": "connector", "se": "S", "te": "T", "pr": 1, "sc": 5, "ec": 4},
+            "N": {"t": "sticky"},
+        },
+        "dimensions": [{"key": "fs#T", "val": 2}],
+        "zindex": ["S", "T", "C", "N"],
+    }
+    board = from_dump(DumpFile.model_validate({"board": META, "strategy": "fiber", "fiber_dump": fiber}))
+    s, t = board.node("S"), board.node("T")
+    assert (s.align, s.valign) == ("right", "top")
+    assert (t.align, t.auto_width, t.font_scale) == ("center", True, 2.0)
+    (edge,) = board.edges
+    assert (edge.routing, edge.start_cap, edge.end_cap) == ("straight", "filled-diamond", "open-arrow")
+    assert any("1 sticky" in r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------- waypoints
+
+
+def _waypoint(connector: int, order: float, x: float, y: float) -> dict:
+    return {"type": "pathWaypoint", "sourcePathIndex": connector, "order": order, "axis": 2,
+            "position": {"x": x, "y": y}, "size": {"x": 1, "y": 1}}
+
+
+def test_waypoints_bend_their_connector_in_order(caplog) -> None:
+    caplog.set_level(logging.WARNING)
+    board = _clip(
+        {"type": "shape", "position": {"x": 0, "y": 0}, "size": {"x": 10, "y": 10}},
+        {"type": "shape", "position": {"x": 500, "y": 0}, "size": {"x": 10, "y": 10}},
+        {"type": "connector", "sourceIndex": 0, "targetIndex": 1},
+        _waypoint(2, 1000278, 300, 50),
+        _waypoint(2, 500439.5, 100, -50),
+    )
+    assert board.edges[0].waypoints == ((100, -50), (300, 50))
+    assert caplog.records == [], "waypoints are drawn, not omitted"
+
+
+def test_a_waypoint_of_no_connector_is_reported(caplog) -> None:
+    caplog.set_level(logging.WARNING)
+    _clip({"type": "shape", "position": {"x": 0, "y": 0}, "size": {"x": 10, "y": 10}}, _waypoint(7, 1, 0, 0))
+    assert "1 pathWaypoint" in caplog.text
+
+
+def test_fiber_waypoints_bend_their_connector() -> None:
+    fiber = {
+        "board": {
+            "C": {"t": "connector", "pr": 3},
+            "W2": {"t": "pathWaypoint", "pi": "C", "or": 2},
+            "W1": {"t": "pathWaypoint", "pi": "C", "or": 1},
+        },
+        "dimensions": [{"key": "bp#W1", "val": [1, 2]}, {"key": "bp#W2", "val": [3, 4]}],
+        "zindex": ["C", "W2", "W1"],
+    }
+    board = from_dump(DumpFile.model_validate({"board": META, "strategy": "fiber", "fiber_dump": fiber}))
+    assert board.edges[0].waypoints == ((1, 2), (3, 4))

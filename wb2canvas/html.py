@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from .adf import _xml_escape
 from .board import Board
-from .svg import render_svg
+from .connectors import ELBOW_STUB, TENSION
+from .svg import svg_document, warn_unmapped
 
 _PAGE_CSS = (
     "html,body{margin:0;height:100%;overflow:hidden;background:#fff;}"
@@ -20,6 +21,8 @@ _PAGE_CSS = (
 
 def render_html(board: Board, shape_map: dict[int, str] | None = None) -> str:
     title = _xml_escape(board.meta.title or board.meta.boardId)
+    svg, unmapped = svg_document(board, shape_map)
+    warn_unmapped("html", board, unmapped)
     return "\n".join(
         [
             "<!doctype html>",
@@ -31,8 +34,8 @@ def render_html(board: Board, shape_map: dict[int, str] | None = None) -> str:
             f"<style>{_PAGE_CSS}</style>",
             "</head>",
             "<body>",
-            render_svg(board, shape_map=shape_map),
-            f"<script>{_VIEWER_JS}</script>",
+            svg,
+            f"<script>{_VIEWER_JS.replace('__ELBOW_STUB__', str(ELBOW_STUB)).replace('__TENSION__', str(TENSION))}</script>",
             "</body>",
             "</html>",
         ]
@@ -42,6 +45,8 @@ def render_html(board: Board, shape_map: dict[int, str] | None = None) -> str:
 _VIEWER_JS = r"""
 (function () {
   if (typeof document === 'undefined') return;
+  var TENSION = __TENSION__, STUB = __ELBOW_STUB__;
+  var SIDE_ANGLE = { right: 0, bottom: Math.PI / 2, left: Math.PI, top: -Math.PI / 2 };
   function init() {
     var svg = document.querySelector('svg');
     if (!svg) return;
@@ -60,13 +65,20 @@ _VIEWER_JS = r"""
     var edgeEls = svg.querySelectorAll('path.wb-edge');
     for (var j = 0; j < edgeEls.length; j++) {
       var p = edgeEls[j];
-      var sa = parseAnchor(p.getAttribute('data-sa'));
-      var ta = parseAnchor(p.getAttribute('data-ta'));
+      var ends = (p.getAttribute('data-ends') || '0,0,0,0').split(',').map(parseFloat);
+      var wp = (p.getAttribute('data-wp') || '').split(' ').filter(Boolean).map(function (xy) {
+        return xy.split(',').map(parseFloat);
+      });
       edgeList.push({
         path: p,
         srcIdx: p.getAttribute('data-src'),
         tgtIdx: p.getAttribute('data-tgt'),
-        sa: sa, ta: ta
+        routing: p.getAttribute('data-routing') || 'curved',
+        sa: parseAnchor(p.getAttribute('data-sa')),
+        ta: parseAnchor(p.getAttribute('data-ta')),
+        waypoints: wp,
+        sEnd: { ext: ends[0], hide: !!ends[1] },
+        tEnd: { ext: ends[2], hide: !!ends[3] }
       });
     }
     autoFit();
@@ -136,11 +148,9 @@ _VIEWER_JS = r"""
       var sb = bounds(nodeMap.get(e.srcIdx));
       var tb = bounds(nodeMap.get(e.tgtIdx));
       if (!sb || !tb) return;
-      var sx = sb.x + sb.w * e.sa.left;
-      var sy = sb.y + sb.h * e.sa.top;
-      var ex = tb.x + tb.w * e.ta.left;
-      var ey = tb.y + tb.h * e.ta.top;
-      e.path.setAttribute('d', buildCurve(sx, sy, ex, ey, e.sa, e.ta));
+      var s = { p: [sb.x + sb.w * e.sa.left, sb.y + sb.h * e.sa.top], side: sideOf(e.sa), ext: e.sEnd.ext, hide: e.sEnd.hide };
+      var t = { p: [tb.x + tb.w * e.ta.left, tb.y + tb.h * e.ta.top], side: sideOf(e.ta), ext: e.tEnd.ext, hide: e.tEnd.hide };
+      e.path.setAttribute('d', pathData(route(e.routing, s, t, e.waypoints)));
     }
     function bounds(nd) {
       if (!nd) return null;
@@ -152,27 +162,142 @@ _VIEWER_JS = r"""
         h: parseFloat(g.getAttribute('data-h'))
       };
     }
-    function buildCurve(sx, sy, ex, ey, sa, ta) {
-      var dx = ex - sx, dy = ey - sy;
-      var h = Math.max(40, Math.max(Math.abs(dx), Math.abs(dy)) * 0.4);
-      var c1 = ctrl(sx, sy, dirOf(sa), h, dx, dy, true);
-      var c2 = ctrl(ex, ey, dirOf(ta), h, dx, dy, false);
-      return 'M ' + sx + ' ' + sy + ' C ' + c1.x + ' ' + c1.y + ', ' + c2.x + ' ' + c2.y + ', ' + ex + ' ' + ey;
+    // The connector router: a line-for-line port of connectors.py.
+    function route(routing, s, t, wps) {
+      if (routing === 'straight') return lines(trim([s.p].concat(wps, [t.p]), s, t));
+      if (routing === 'dynamic') return dynamic(s, t, wps);
+      return curved(s, t, wps);
     }
-    function dirOf(a) {
-      if (a.left <= 0.05) return 'left';
-      if (a.left >= 0.95) return 'right';
-      if (a.top <= 0.05) return 'top';
-      if (a.top >= 0.95) return 'bottom';
-      return null;
+    function lines(pts) {
+      return { start: pts[0], segs: pts.slice(1).map(function (p) { return [p]; }) };
     }
-    function ctrl(x, y, d, h, dx, dy, leaving) {
-      if (d === 'right') return { x: x + h, y: y };
-      if (d === 'left') return { x: x - h, y: y };
-      if (d === 'top') return { x: x, y: y - h };
-      if (d === 'bottom') return { x: x, y: y + h };
-      if (Math.abs(dx) >= Math.abs(dy)) return { x: x + (leaving ? h : -h), y: y };
-      return { x: x, y: y + (leaving ? h : -h) };
+    function dynamic(s, t, wps) {
+      var stub = Math.max(STUB, s.ext + 10, t.ext + 10), pts;
+      if (wps.length) {
+        pts = [s.p];
+        var horizontal = outward(s.side, wps[0][0] - s.p[0], wps[0][1] - s.p[1], true)[0] !== 0;
+        wps.concat([t.p]).forEach(function (p) {
+          var a = pts[pts.length - 1];
+          pts.push(horizontal ? [p[0], a[1]] : [a[0], p[1]]);
+          pts.push(p);
+        });
+      } else {
+        pts = elbow(s.p, t.p, s.side, t.side, stub);
+      }
+      return lines(trim(dropCollinear(pts), s, t));
+    }
+    function curved(s, t, wps) {
+      var pts = [s.p].concat(wps, [t.p]), extended = !!(s.ext || t.ext);
+      var a0 = endAngle(s.side, pts, false, extended), a1 = endAngle(t.side, pts, true, extended);
+      var sp = pts.slice(), lead = s.ext > 0 && a0 !== null, tail = t.ext > 0 && a1 !== null;
+      if (lead) sp[0] = add(pts[0], polar(a0, s.ext));
+      if (tail) sp[sp.length - 1] = add(pts[pts.length - 1], polar(a1 + Math.PI, t.ext));
+      var segs = [], first = pts[0];
+      if (lead && !s.hide) segs.push([sp[0]]);
+      else if (lead) first = sp[0];
+      segs = segs.concat(spline(sp, a0, a1));
+      if (tail && !t.hide) segs.push([pts[pts.length - 1]]);
+      return { start: first, segs: segs };
+    }
+    function spline(pts, a0, a1) {
+      var n = pts.length;
+      if (n < 2) return [];
+      var p0 = pts[0], pn = pts[n - 1];
+      if (n === 2 && a0 === null && a1 === null) return [[p0, pn, pn]];
+      var ct = a0 !== null ? add(p0, scale(polar(a0, 1), dist(p0, pts[1]) * TENSION)) : null;
+      var lt = a1 !== null ? sub(pn, scale(polar(a1, 1), dist(pn, pts[n - 2]) * TENSION)) : null;
+      var h = [];
+      for (var i = 1; i < n - 1; i++) {
+        var prev = (i === 1 && ct) ? ct : pts[i - 1], nxt = (i === n - 2 && lt) ? lt : pts[i + 1];
+        var tg = unit(add(unit(sub(pts[i], prev)), unit(sub(nxt, pts[i]))));
+        h.push(sub(pts[i], scale(tg, dist(pts[i - 1], pts[i]) * TENSION)));
+        h.push(add(pts[i], scale(tg, dist(pts[i], pts[i + 1]) * TENSION)));
+      }
+      function toward(p, q) { return add(p, scale(unit(sub(q, p)), dist(p, q) * TENSION)); }
+      if (ct === null && lt !== null) { h.push(lt); h.unshift(toward(p0, h[0])); }
+      else { h.unshift(ct !== null ? ct : toward(p0, h[0])); h.push(lt !== null ? lt : toward(pn, h[h.length - 1])); }
+      var out = [];
+      for (var k = 0; k < n - 1; k++) out.push([h[2 * k], h[2 * k + 1], pts[k + 1]]);
+      return out;
+    }
+    function endAngle(side, pts, atEnd, extended) {
+      if (side) return atEnd ? SIDE_ANGLE[side] + Math.PI : SIDE_ANGLE[side];
+      if (pts.length > 2) {
+        if (!extended) return null;
+        var three = atEnd ? pts.slice(-3) : pts.slice(0, 3);
+        var segs = spline(three, null, null), seg = segs[atEnd ? segs.length - 1 : 0];
+        return bezierAngle(atEnd ? three[1] : three[0], seg[0], seg[1], seg[2], atEnd ? 1 : 0);
+      }
+      var w = Math.atan2(pts[1][1] - pts[0][1], pts[1][0] - pts[0][0]);
+      return w + 0.68 * Math.sin((w - Math.PI / 2) / 0.5);
+    }
+    function bezierAngle(s, c1, c2, e, t) {
+      var u = 1 - t;
+      var dx = 3 * u * u * (c1[0] - s[0]) + 6 * u * t * (c2[0] - c1[0]) + 3 * t * t * (e[0] - c2[0]);
+      var dy = 3 * u * u * (c1[1] - s[1]) + 6 * u * t * (c2[1] - c1[1]) + 3 * t * t * (e[1] - c2[1]);
+      return Math.atan2(dy, dx);
+    }
+    function elbow(src, tgt, sSide, tSide, stub) {
+      var dx = tgt[0] - src[0], dy = tgt[1] - src[1];
+      var su = outward(sSide, dx, dy, true), tu = outward(tSide, dx, dy, false);
+      var a = [src[0] + su[0] * stub, src[1] + su[1] * stub], b = [tgt[0] + tu[0] * stub, tgt[1] + tu[1] * stub], mid;
+      if (su[0] && tu[0]) { var mx = (a[0] + b[0]) / 2; mid = [[mx, a[1]], [mx, b[1]]]; }
+      else if (su[1] && tu[1]) { var my = (a[1] + b[1]) / 2; mid = [[a[0], my], [b[0], my]]; }
+      else if (su[0]) mid = [[b[0], a[1]]];
+      else mid = [[a[0], b[1]]];
+      return dropCollinear([src, a].concat(mid, [b, tgt]));
+    }
+    function outward(side, dx, dy, leaving) {
+      if (side) return [Math.round(Math.cos(SIDE_ANGLE[side])), Math.round(Math.sin(SIDE_ANGLE[side]))];
+      var sign = leaving ? 1 : -1;
+      if (Math.abs(dx) >= Math.abs(dy)) return [dx >= 0 ? sign : -sign, 0];
+      return [0, dy >= 0 ? sign : -sign];
+    }
+    function trim(pts, s, t) {
+      pts = pts.slice();
+      if (s.hide && pts.length >= 2) pts[0] = towardBy(pts[0], pts[1], s.ext);
+      if (t.hide && pts.length >= 2) pts[pts.length - 1] = towardBy(pts[pts.length - 1], pts[pts.length - 2], t.ext);
+      return pts;
+    }
+    function dropCollinear(pts) {
+      var out = [];
+      pts.forEach(function (p) {
+        var last = out[out.length - 1];
+        if (last && close(p[0], last[0]) && close(p[1], last[1])) return;
+        if (out.length >= 2) {
+          var q = out[out.length - 2];
+          var vertical = close(q[0], last[0]) && close(last[0], p[0]) && (last[1] - q[1]) * (p[1] - last[1]) > 0;
+          var horizontal = close(q[1], last[1]) && close(last[1], p[1]) && (last[0] - q[0]) * (p[0] - last[0]) > 0;
+          if (vertical || horizontal) {
+            out[out.length - 1] = p;
+            return;
+          }
+        }
+        out.push(p);
+      });
+      return out;
+    }
+    function close(a, b) { return Math.abs(a - b) <= 1e-9 * Math.max(Math.abs(a), Math.abs(b)); }
+    function add(a, b) { return [a[0] + b[0], a[1] + b[1]]; }
+    function sub(a, b) { return [a[0] - b[0], a[1] - b[1]]; }
+    function scale(a, k) { return [a[0] * k, a[1] * k]; }
+    function dist(a, b) { return Math.hypot(a[0] - b[0], a[1] - b[1]); }
+    function unit(a) { var n = Math.hypot(a[0], a[1]); return n ? [a[0] / n, a[1] / n] : [0, 0]; }
+    function polar(angle, len) { return [Math.cos(angle) * len, Math.sin(angle) * len]; }
+    function towardBy(a, b, d) { return add(a, scale(unit(sub(b, a)), Math.min(d, dist(a, b)))); }
+    function pathData(r) {
+      var d = 'M ' + r.start[0] + ' ' + r.start[1];
+      r.segs.forEach(function (seg) {
+        d += seg.length === 1 ? ' L ' + seg[0][0] + ' ' + seg[0][1]
+          : ' C ' + seg.map(function (q) { return q[0] + ' ' + q[1]; }).join(', ');
+      });
+      return d;
+    }
+    function sideOf(a) {
+      var cx = a.left - 0.5, cy = a.top - 0.5;
+      if (Math.max(Math.abs(cx), Math.abs(cy)) < 0.05) return null;
+      if (Math.abs(cx) >= Math.abs(cy)) return cx > 0 ? 'right' : 'left';
+      return cy > 0 ? 'bottom' : 'top';
     }
     function parseAnchor(s) {
       if (!s) return { left: 0.5, top: 0.5 };

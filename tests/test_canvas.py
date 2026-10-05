@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+import pytest
 
 from wb2canvas.board import from_dump, load_board
 from wb2canvas.canvas import CanvasDoc, CanvasNode, push_apart, render_canvas
@@ -73,10 +76,21 @@ def test_z_order_follows_the_source() -> None:
     assert ids[2].startswith("h:")  # the image is not a connector end: content id
 
 
-def test_edge_with_an_end_off_the_board_is_dropped() -> None:
+def test_edge_with_an_end_off_the_board_is_dropped_and_reported(caplog) -> None:
+    caplog.set_level(logging.WARNING)
     dump = DumpFile.model_validate_json(FIXTURE.read_text())
     dump.elements[3].targetIndex = 99
     assert render_canvas(from_dump(dump)).edges == []
+    assert "omitted 1 connector" in caplog.text
+
+
+@pytest.mark.parametrize(("cap", "end"), [(2, "arrow"), (3, "arrow"), (4, "arrow"), (1, "none"), (13, "none")])
+def test_arrowheads_become_arrows_and_other_line_ends_are_dropped(caplog, cap: int, end: str) -> None:
+    caplog.set_level(logging.WARNING)
+    dump = DumpFile.model_validate_json(FIXTURE.read_text())
+    dump.elements[3].endCap = cap
+    assert render_canvas(from_dump(dump)).edges[0].toEnd == end
+    assert ("crows-foot" in caplog.text) == (cap == 13)
 
 
 def test_collision_pass_is_off_by_default() -> None:
