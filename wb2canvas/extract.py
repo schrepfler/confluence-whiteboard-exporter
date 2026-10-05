@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+from contextlib import AsyncExitStack
 import re
 import shutil
 import subprocess
@@ -10,18 +12,24 @@ from pathlib import Path
 from typing import Any, Literal
 
 from playwright.async_api import (
+    Browser,
+    BrowserContext,
     Frame,
     Page,
+    Playwright,
     Response,
-    TimeoutError as PlaywrightTimeoutError,
     async_playwright,
 )
+from playwright.async_api import Error as PlaywrightError
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from .model import BoardMeta, ClipboardElement, DumpFile, FiberDump
 from .storage import atomic_write_text, chrome_profile_dir, dump_path, ensure_dir, media_dir
 
 
 Strategy = Literal["clipboard", "fiber", "auto"]
+
+log = logging.getLogger(__name__)
 
 
 WHITEBOARD_URL = "{base}/wiki/spaces/{space}/whiteboard/{board}"
@@ -131,91 +139,127 @@ async def login_attach(
     print(f"saved {state_path}")
 
 
-async def extract_board(
-    board: BoardMeta,
-    base_url: str,
-    out_dir: Path,
-    state_path: Path,
-    strategy: Strategy = "auto",
-    download_media: bool = True,
-    headless: bool = True,
-    timeout_ms: int = 30_000,
-) -> DumpFile:
-    space_key = board.spaceKey
-    board_id = board.boardId
-    target_dump = dump_path(out_dir, space_key, board_id)
-    ensure_dir(target_dump.parent)
-    target_media: Path | None = None
-    if download_media:
-        target_media = ensure_dir(media_dir(out_dir, space_key, board_id))
+class Extractor:
+    """Extracts boards through one shared browser.
 
-    media_map: dict[str, str] = {}
-    pending_media: set[asyncio.Task[None]] = set()
+    Launching a browser per board made whole-space runs pay a browser
+    start-up for every board; this keeps one browser and context (with the
+    saved session) and opens a fresh page per board.
 
-    def on_response(r: Response) -> None:
-        task = asyncio.create_task(_capture_media(r, target_media, media_map))  # type: ignore[arg-type]
-        pending_media.add(task)
-        task.add_done_callback(pending_media.discard)
+        async with Extractor(base_url, state_path) as ex:
+            for board in boards:
+                await ex.extract(board, out_dir)
+    """
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=headless)
-        context = await browser.new_context(
-            storage_state=str(state_path) if state_path.exists() else None,
+    def __init__(
+        self,
+        base_url: str,
+        state_path: Path,
+        *,
+        strategy: Strategy = "auto",
+        download_media: bool = True,
+        headless: bool = True,
+        timeout_ms: int = 30_000,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.state_path = state_path
+        self.strategy = strategy
+        self.download_media = download_media
+        self.headless = headless
+        self.timeout_ms = timeout_ms
+        self._stack = AsyncExitStack()
+        self._context: BrowserContext | None = None
+
+    async def __aenter__(self) -> Extractor:
+        pw = await self._stack.enter_async_context(async_playwright())
+        browser = await launch_browser(pw, headless=self.headless)
+        self._stack.push_async_callback(browser.close)
+        self._context = await browser.new_context(
+            storage_state=str(self.state_path) if self.state_path.exists() else None,
             permissions=["clipboard-read", "clipboard-write"],
         )
-        page = await context.new_page()
+        return self
 
-        if download_media and target_media is not None:
-            page.on("response", on_response)
+    async def __aexit__(self, *exc: object) -> None:
+        await self._stack.aclose()
 
-        url = WHITEBOARD_URL.format(
-            base=base_url.rstrip("/"), space=space_key, board=board_id
+    async def extract(self, board: BoardMeta, out_dir: Path) -> DumpFile:
+        if self._context is None:
+            raise RuntimeError("use Extractor as an async context manager")
+        target_dump = dump_path(out_dir, board.spaceKey, board.boardId)
+        target_media = media_dir(out_dir, board.spaceKey, board.boardId)
+        media_map: dict[str, str] = {}
+        pending_media: set[asyncio.Task[None]] = set()
+
+        def on_response(r: Response) -> None:
+            task = asyncio.create_task(_capture_media(r, target_media, media_map))
+            pending_media.add(task)
+            task.add_done_callback(pending_media.discard)
+
+        page = await self._context.new_page()
+        try:
+            if self.download_media:
+                ensure_dir(target_media)
+                page.on("response", on_response)
+            url = WHITEBOARD_URL.format(base=self.base_url, space=board.spaceKey, board=board.boardId)
+            await page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
+            _raise_if_login_page(page.url)
+
+            frame = await _wait_for_canvas_frame(page, timeout_ms=self.timeout_ms)
+            await frame.evaluate(_PROBE_JS)
+            await frame.wait_for_function(
+                "globalThis.__wb2canvas && globalThis.__wb2canvas.docReady && globalThis.__wb2canvas.docReady()",
+                timeout=self.timeout_ms,
+            )
+            await _wait_for_doc_populated(frame, timeout_ms=10_000)
+            strategy, elements, fiber_dump = await self._capture(page, frame)
+            # Media bodies may still be streaming; closing the page first
+            # would drop them.
+            if pending_media:
+                await asyncio.wait(set(pending_media), timeout=60)
+        finally:
+            await page.close()
+
+        dump = DumpFile(
+            board=board,
+            strategy=strategy,  # type: ignore[arg-type]
+            elements=elements,
+            fiber_dump=fiber_dump,
+            media=media_map,
         )
-        await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-        _raise_if_login_page(page.url)
+        atomic_write_text(target_dump, json.dumps(dump.model_dump(exclude_none=True), indent=2))
+        return dump
 
-        frame = await _wait_for_canvas_frame(page, timeout_ms=timeout_ms)
-        await frame.evaluate(_PROBE_JS)
-        await frame.wait_for_function(
-            "globalThis.__wb2canvas && globalThis.__wb2canvas.docReady && globalThis.__wb2canvas.docReady()",
-            timeout=timeout_ms,
-        )
-        await _wait_for_doc_populated(frame, timeout_ms=10_000)
+    async def _capture(
+        self, page: Page, frame: Frame
+    ) -> tuple[str, list[ClipboardElement], FiberDump | None]:
+        if self.strategy == "fiber":
+            return "fiber", [], await _extract_via_fiber(frame)
+        try:
+            return "clipboard", await _extract_via_clipboard(page, frame), None
+        except (PlaywrightTimeoutError, RuntimeError) as e:
+            if self.strategy == "clipboard":
+                raise
+            log.warning("clipboard capture failed (%s); falling back to the Yjs document", e)
+            return "fiber", [], await _extract_via_fiber(frame)
 
-        elements: list[ClipboardElement] = []
-        fiber_dump: FiberDump | None = None
-        used: str = "clipboard"
 
-        if strategy == "fiber":
-            fiber_dump = await _extract_via_fiber(frame)
-            used = "fiber"
-        else:
-            try:
-                elements = await _extract_via_clipboard(page, frame)
-                used = "clipboard"
-            except (PlaywrightTimeoutError, RuntimeError) as e:
-                if strategy == "clipboard":
-                    raise
-                print(f"  clipboard strategy failed ({e}); falling back to fiber", flush=True)
-                fiber_dump = await _extract_via_fiber(frame)
-                used = "fiber"
-
-        # Media bodies are still streaming in; closing first would truncate or
-        # drop them (large images were silently lost before).
-        if pending_media:
-            await asyncio.wait(set(pending_media), timeout=60)
-        await browser.close()
-
-    dump = DumpFile(
-        dump_version=1,
-        board=board,
-        strategy=used,  # type: ignore[arg-type]
-        elements=elements,
-        fiber_dump=fiber_dump,
-        media=media_map,
-    )
-    atomic_write_text(target_dump, json.dumps(dump.model_dump(exclude_none=True), indent=2))
-    return dump
+async def launch_browser(pw: Playwright, *, headless: bool) -> Browser:
+    """Prefer the installed Google Chrome: it is already present for
+    `auth attach`, and unlike Playwright's own download it is not removed
+    when the OS purges caches."""
+    try:
+        return await pw.chromium.launch(channel="chrome", headless=headless)
+    except PlaywrightError as chrome_err:
+        try:
+            return await pw.chromium.launch(headless=headless)
+        except PlaywrightError as bundled_err:
+            raise RuntimeError(
+                "no browser available: install Google Chrome, or run "
+                "`uv run playwright install chromium`"
+                f" (chrome: {chrome_err.message.splitlines()[0]}; "
+                f"bundled: {bundled_err.message.splitlines()[0]})"
+            ) from bundled_err
 
 
 def _raise_if_login_page(url: str) -> None:
@@ -305,7 +349,7 @@ async def _extract_via_clipboard(page: Page, frame: Frame) -> list[ClipboardElem
                 "globalThis.__wb2canvas.getCapturedClipboard() !== null",
                 timeout=2_500,
             )
-            print(f"  clipboard strategy used: {name}", flush=True)
+            log.info("clipboard captured via %s", name)
             break
         except PlaywrightTimeoutError as e:
             last_err = e

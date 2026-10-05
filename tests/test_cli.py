@@ -71,29 +71,95 @@ def test_shape_map_rejects_unknown_stereotype(tmp_path: Path, extracted: Path) -
     assert "unknown" in result.output
 
 
-def test_extract_exits_nonzero_when_a_board_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import wb2canvas.discover as discover_mod
+class FakeExtractor:
+    """Stands in for the browser session; records how it was used."""
+
+    instances: list[FakeExtractor] = []
+    fail_with: dict[str, Exception] = {}
+
+    def __init__(self, base_url: str, state_path: Path, **options: object) -> None:
+        self.entered = 0
+        self.extracted: list[str] = []
+        FakeExtractor.instances.append(self)
+
+    async def __aenter__(self) -> FakeExtractor:
+        self.entered += 1
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    async def extract(self, board, out_dir: Path):
+        from wb2canvas.model import DumpFile
+
+        self.extracted.append(board.boardId)
+        if board.boardId in self.fail_with:
+            raise self.fail_with[board.boardId]
+        return DumpFile(board=board, strategy="clipboard")
+
+
+@pytest.fixture
+def fake_extractor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> type[FakeExtractor]:
     import wb2canvas.extract as extract_mod
     import wb2canvas.storage as storage_mod
-    from wb2canvas.model import BoardMeta
 
+    FakeExtractor.instances = []
+    FakeExtractor.fail_with = {}
     state = tmp_path / "state.json"
     state.write_text("{}")
     monkeypatch.setattr(storage_mod, "storage_state_path", lambda: state)
-    monkeypatch.setattr(
-        discover_mod, "get_whiteboard",
-        lambda *a, **k: BoardMeta(boardId="42", title="t", spaceKey="TEST"),
+    monkeypatch.setattr(extract_mod, "Extractor", FakeExtractor)
+    return FakeExtractor
+
+
+def _space_index(tmp_path: Path, *board_ids: str) -> None:
+    idx = tmp_path / "out" / "TEST" / "_boards.json"
+    idx.parent.mkdir(parents=True, exist_ok=True)
+    idx.write_text(json.dumps([{"boardId": b, "title": f"Board {b}", "spaceKey": "TEST"} for b in board_ids]))
+
+
+def _extract_space(tmp_path: Path):
+    return CliRunner().invoke(
+        main, ["--out", str(tmp_path / "out"), "--base-url", "https://x.atlassian.net", "extract", "--space", "TEST"],
     )
 
-    async def boom(*a, **k):
-        raise RuntimeError("simulated extraction failure")
 
-    monkeypatch.setattr(extract_mod, "extract_board", boom)
+def test_extract_uses_one_browser_for_the_whole_space(tmp_path: Path, fake_extractor) -> None:
+    _space_index(tmp_path, "1", "2", "3")
+    result = _extract_space(tmp_path)
+    assert result.exit_code == 0, result.output
+    (session,) = fake_extractor.instances
+    assert session.entered == 1
+    assert session.extracted == ["1", "2", "3"]
 
-    result = CliRunner().invoke(
-        main,
-        ["--out", str(tmp_path / "out"), "--base-url", "https://x.atlassian.net",
-         "--email", "e", "--token", "t", "extract", "42"],
-    )
+
+def test_extract_starts_no_browser_when_everything_is_already_extracted(tmp_path: Path, fake_extractor) -> None:
+    _space_index(tmp_path, "1")
+    done = tmp_path / "out" / "TEST" / "1" / "dump.json"
+    done.parent.mkdir(parents=True)
+    done.write_text("{}")
+    result = _extract_space(tmp_path)
+    assert result.exit_code == 0, result.output
+    assert fake_extractor.instances == []
+    assert "skip" in result.output
+
+
+def test_extract_exits_nonzero_but_continues_when_a_board_fails(tmp_path: Path, fake_extractor) -> None:
+    _space_index(tmp_path, "1", "2", "3")
+    fake_extractor.fail_with = {"2": RuntimeError("simulated extraction failure")}
+    result = _extract_space(tmp_path)
     assert result.exit_code == 1
-    assert "1 of 1 board(s) failed: 42" in result.output
+    assert fake_extractor.instances[0].extracted == ["1", "2", "3"], "a bad board does not stop the rest"
+    assert "1 of 3 board(s) failed: 2" in result.output
+
+
+def test_expired_session_stops_the_run(tmp_path: Path, fake_extractor) -> None:
+    from wb2canvas.extract import SessionExpiredError
+
+    _space_index(tmp_path, "1", "2", "3")
+    fake_extractor.fail_with = {"1": SessionExpiredError("run `wb2canvas auth attach`")}
+    result = _extract_space(tmp_path)
+    assert result.exit_code == 1
+    assert fake_extractor.instances[0].extracted == ["1"], "no point retrying with a dead session"
+    assert "3 of 3 board(s) failed" in result.output
+    assert "auth attach" in result.output

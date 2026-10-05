@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -8,6 +9,9 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 import click
 from dotenv import find_dotenv, load_dotenv
+
+from .model import BoardMeta
+from .storage import dump_path
 
 if TYPE_CHECKING:
     from .deploy import Written
@@ -65,6 +69,11 @@ def _env(name: str) -> str | None:
 @click.option("--token", default=lambda: _env("CONFLUENCE_API_TOKEN"), help="Atlassian API token.")
 @click.pass_context
 def main(ctx: click.Context, verbose: bool, out_dir: Path, base_url: str | None, email: str | None, token: str | None) -> None:
+    logging.basicConfig(
+        level=logging.INFO if verbose else logging.WARNING,
+        format="  %(message)s",
+        force=True,
+    )
     ctx.ensure_object(dict)
     ctx.obj.update(
         verbose=verbose,
@@ -183,9 +192,7 @@ def extract(
 
     from .deploy import export_dump
     from .discover import get_whiteboard
-    from .extract import extract_board
-    from .model import BoardMeta
-    from .storage import boards_index_path, dump_path, storage_state_path
+    from .storage import boards_index_path, storage_state_path
 
     if not board_id and not space:
         click.echo("ERROR: provide BOARD_ID or --space SPACE", err=True)
@@ -233,36 +240,22 @@ def extract(
             sys.exit(2)
         boards = [get_whiteboard(base_url, email, token, board_id)]  # type: ignore[arg-type]
 
-    headless = not headed
-    failed: list[str] = []
+    todo = [b for b in boards if force or not dump_path(out_dir, b.spaceKey, b.boardId).exists()]
     for b in boards:
-        target = dump_path(out_dir, b.spaceKey, b.boardId)
-        if target.exists() and not force:
-            click.echo(f"skip  {target} (exists; use --force)")
-        else:
-            click.echo(f"extract {b.boardId} ({b.title!r}) → {target}")
-            try:
-                dump = _asyncio.run(
-                    extract_board(
-                        b,
-                        base_url,
-                        out_dir,
-                        state_path,
-                        strategy=strategy,  # type: ignore[arg-type]
-                        download_media=not no_media,
-                        headless=headless,
-                    )
-                )
-            except Exception as e:
-                click.echo(f"  FAILED: {e}", err=True)
-                failed.append(b.boardId)
-                continue
-            click.echo(
-                f"  wrote {target} (strategy={dump.strategy}, "
-                f"elements={len(dump.elements)}, media={len(dump.media)})"
-            )
+        if b not in todo:
+            click.echo(f"skip  {dump_path(out_dir, b.spaceKey, b.boardId)} (exists; use --force)")
+    failed = _asyncio.run(
+        _extract_boards(
+            todo, base_url, state_path, out_dir,
+            strategy=strategy, download_media=not no_media, headless=not headed,
+        )
+    ) if todo else []
 
-        if vault_dir is not None:
+    if vault_dir is not None:
+        for b in boards:
+            target = dump_path(out_dir, b.spaceKey, b.boardId)
+            if b.boardId in failed or not target.exists():
+                continue
             _echo_results(
                 export_dump(
                     target,
@@ -408,6 +401,42 @@ def export(
         ctx.invoke(convert, dump_path=None, all_space=space, force=force, formats=formats)
     if exit_code:
         sys.exit(exit_code)
+
+
+async def _extract_boards(
+    boards: list[BoardMeta],
+    base_url: str,
+    state_path: Path,
+    out_dir: Path,
+    **options: Any,
+) -> list[str]:
+    """Extract `boards` through one browser; return the ids that failed.
+
+    An expired session fails every remaining board the same way, so the
+    run stops at the first one instead of retrying each board.
+    """
+    from .extract import Extractor, SessionExpiredError
+
+    failed: list[str] = []
+    async with Extractor(base_url, state_path, **options) as ex:
+        for i, b in enumerate(boards):
+            target = dump_path(out_dir, b.spaceKey, b.boardId)
+            click.echo(f"extract {b.boardId} ({b.title!r}) → {target}")
+            try:
+                dump = await ex.extract(b, out_dir)
+            except SessionExpiredError as e:
+                click.echo(f"  FAILED: {e}", err=True)
+                failed.extend(x.boardId for x in boards[i:])
+                break
+            except Exception as e:  # noqa: BLE001 - one bad board must not stop the rest
+                click.echo(f"  FAILED: {e}", err=True)
+                failed.append(b.boardId)
+                continue
+            click.echo(
+                f"  wrote {target} (strategy={dump.strategy}, "
+                f"elements={len(dump.elements)}, media={len(dump.media)})"
+            )
+    return failed
 
 
 def _vault_dest(vault_dir: Path | None, vault_prefix: str) -> Path | None:
