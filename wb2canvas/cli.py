@@ -9,7 +9,7 @@ import click
 from dotenv import find_dotenv, load_dotenv
 
 if TYPE_CHECKING:
-    from .model import DumpFile
+    from .deploy import Written
 
 
 def run() -> None:
@@ -158,6 +158,7 @@ def extract(
     import asyncio as _asyncio
     import json as _json
 
+    from .deploy import export_dump
     from .discover import get_whiteboard
     from .extract import extract_board
     from .model import BoardMeta
@@ -239,13 +240,14 @@ def extract(
             )
 
         if vault_dir is not None:
-            ctx.invoke(
-                convert,
-                dump_path=target,
-                all_space=None,
-                force=force,
-                vault_dir=vault_dir,
-                vault_prefix=vault_prefix,
+            _echo_results(
+                export_dump(
+                    target,
+                    ["canvas"],
+                    dest_dir=_vault_dest(vault_dir, vault_prefix),
+                    vault_prefix=vault_prefix.strip("/"),
+                    force=force,
+                )
             )
 
     if failed:
@@ -305,62 +307,36 @@ def convert(
     collision_fix: bool,
     shape_map_str: str,
 ) -> None:
-    """Convert a dump.json to JSON Canvas (default) or SVG."""
-    import shutil as _shutil
-
-    from .model import DumpFile
+    """Render dump.json files as JSON Canvas (default) or SVG."""
+    from .deploy import export_dump
 
     if not dump_path and not all_space:
         click.echo("ERROR: provide DUMP_PATH or --all SPACE", err=True)
         sys.exit(2)
 
     out_dir: Path = ctx.obj["out_dir"]
-
     if dump_path:
         targets = [dump_path]
     else:
         space_dir = out_dir / all_space  # type: ignore[arg-type]
-        if not space_dir.exists():
-            click.echo(f"ERROR: no extracted boards under {space_dir}", err=True)
-            sys.exit(2)
         targets = sorted(space_dir.glob("*/dump.json"))
         if not targets:
-            click.echo(f"ERROR: no dump.json files under {space_dir}", err=True)
+            click.echo(f"ERROR: no extracted boards (dump.json) under {space_dir}", err=True)
             sys.exit(2)
 
-    ext = ".canvas" if fmt == "canvas" else ".svg"
-    shape_map_overrides = _parse_shape_map(shape_map_str) if shape_map_str else None
-
+    shape_map = _parse_shape_map(shape_map_str) if shape_map_str else None
     for target in targets:
-        dump = DumpFile.model_validate_json(target.read_text())
-        board_id = dump.board.boardId
-        prefix_clean = vault_prefix.strip("/")
-
-        if vault_dir is not None:
-            dest_root = vault_dir / prefix_clean if prefix_clean else vault_dir
-            dest_path = dest_root / f"{board_id}{ext}"
-            if dest_path.exists() and not force:
-                click.echo(f"skip  {dest_path} (exists; use --force)")
-                continue
-            dest_root.mkdir(parents=True, exist_ok=True)
-            src_media = target.parent / "media"
-            copied = 0
-            if src_media.exists():
-                dest_media = dest_root / "media"
-                dest_media.mkdir(parents=True, exist_ok=True)
-                for f in src_media.iterdir():
-                    if f.is_file():
-                        _shutil.copy2(f, dest_media / f.name)
-                        copied += 1
-            stats = _write_output(fmt, dump, target, dest_path, prefix_clean, collision_fix, shape_map_overrides)
-            click.echo(f"deployed → {dest_path}  ({stats}, {copied} media files)")
-        else:
-            out_path = target.with_name(f"{board_id}{ext}")
-            if out_path.exists() and not force:
-                click.echo(f"skip  {out_path} (exists; use --force)")
-                continue
-            stats = _write_output(fmt, dump, target, out_path, prefix_clean, collision_fix, shape_map_overrides)
-            click.echo(f"wrote {out_path}  ({stats})")
+        _echo_results(
+            export_dump(
+                target,
+                [fmt],
+                dest_dir=_vault_dest(vault_dir, vault_prefix),
+                vault_prefix=vault_prefix.strip("/"),
+                force=force,
+                collision_fix=collision_fix,
+                shape_map=shape_map,
+            )
+        )
 
 
 @main.command()
@@ -415,37 +391,22 @@ def export(
         sys.exit(exit_code)
 
 
-def _write_output(
-    fmt: str,
-    dump: DumpFile,
-    dump_path: Path,
-    out_path: Path,
-    vault_prefix: str,
-    collision_fix: bool,
-    shape_map: dict[int, str] | None,
-) -> str:
-    from .convert import convert_file
-    from .storage import atomic_write_text
-    from .svg import dump_to_svg
+def _vault_dest(vault_dir: Path | None, vault_prefix: str) -> Path | None:
+    if vault_dir is None:
+        return None
+    prefix = vault_prefix.strip("/")
+    return vault_dir / prefix if prefix else vault_dir
 
-    if fmt == "canvas":
-        _, doc = convert_file(dump_path, out_path, vault_prefix=vault_prefix, resolve_collisions=collision_fix)
-        return f"{len(doc.nodes)} nodes, {len(doc.edges)} edges"
-    if dump.strategy != "clipboard":
-        raise click.ClickException(
-            f"{dump_path}: SVG needs a clipboard-strategy dump (this one is {dump.strategy!r}); "
-            "re-extract with --strategy clipboard --force"
-        )
-    # SVG resolves image hrefs relative to the SVG file, so they stay `media/...`
-    # regardless of vault prefix (only JSON Canvas needs vault-root paths).
-    svg = dump_to_svg(dump, shape_map=shape_map)
-    atomic_write_text(out_path, svg)
-    return f"{len(svg) // 1024} KB"
+
+def _echo_results(results: list[Written]) -> None:
+    for r in results:
+        verb = "skip " if r.skipped else "wrote"
+        click.echo(f"{verb} {r.path}  ({r.summary})")
 
 
 def _parse_shape_map(s: str) -> dict[int, str]:
     """Parse '4=ellipse,5=diamond' into {4: 'ellipse', 5: 'diamond'}."""
-    from .svg import STEREOTYPES
+    from .shapes import STEREOTYPES
 
     known = set(STEREOTYPES)
     out: dict[int, str] = {}

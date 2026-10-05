@@ -5,14 +5,15 @@ from pathlib import Path
 
 import pytest
 
+from wb2canvas.board import from_dump
 from wb2canvas.cli import _parse_shape_map
 from wb2canvas.model import DumpFile
-from wb2canvas.svg import (
-    DEFAULT_SHAPE_MAP,
-    _PATH_GENERATORS,
-    _shape_outline,
-    dump_to_svg,
-)
+from wb2canvas.shapes import DEFAULT_SHAPE_MAP, GENERATORS, outline
+from wb2canvas.svg import render_svg
+
+
+def dump_to_svg(dump: DumpFile, **kw) -> str:
+    return render_svg(from_dump(dump), **kw)
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_dump.json"
@@ -40,31 +41,31 @@ def test_default_shape_map_known_kinds() -> None:
     assert DEFAULT_SHAPE_MAP[13] == "cylinder"
 
 
-@pytest.mark.parametrize("name", sorted(_PATH_GENERATORS.keys()))
+@pytest.mark.parametrize("name", sorted(GENERATORS.keys()))
 def test_path_generators_emit_valid_d_strings(name: str) -> None:
     """Every registered stereotype must produce a non-empty path-data string
     starting with M (move) and containing a Z (close) command."""
-    gen = _PATH_GENERATORS[name]
+    gen = GENERATORS[name]
     d = gen(0.0, 0.0, 100.0, 60.0)
     assert d.startswith("M")
     assert "Z" in d
 
 
 def test_shape_outline_unknown_kind_falls_back_to_rect() -> None:
-    d, name = _shape_outline(99, 0.0, 0.0, 100.0, 60.0, DEFAULT_SHAPE_MAP)
+    d, name = outline(99, 0.0, 0.0, 100.0, 60.0, DEFAULT_SHAPE_MAP)
     assert d == ""
     assert name == "rect"
 
 
 def test_shape_outline_resolves_cylinder() -> None:
-    d, name = _shape_outline(13, 0.0, 0.0, 100.0, 60.0, DEFAULT_SHAPE_MAP)
+    d, name = outline(13, 0.0, 0.0, 100.0, 60.0, DEFAULT_SHAPE_MAP)
     assert name == "cylinder"
     assert d.startswith("M")
 
 
 def test_shape_outline_respects_override_map() -> None:
     overrides = {**DEFAULT_SHAPE_MAP, 99: "ellipse"}
-    d, name = _shape_outline(99, 0.0, 0.0, 100.0, 60.0, overrides)
+    d, name = outline(99, 0.0, 0.0, 100.0, 60.0, overrides)
     assert name == "ellipse"
     assert d.startswith("M")
 
