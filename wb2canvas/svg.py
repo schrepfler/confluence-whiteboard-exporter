@@ -16,7 +16,7 @@ from collections import Counter
 from .adf import _xml_escape
 from .board import SVG_METRICS, Board, Box, Edge, Kind, Node, Point, Rgb, anchor_point, anchor_side, layout
 from .connectors import ARROWHEAD_SCALE, ARROWHEADS, End, Route, end_stub, route, thickness
-from .shapes import Section, drawing, fmt, kind_label, resolve
+from .shapes import DASH_PERIOD, DASH_SHARE, SHAPE_LINE_WIDTH, Section, dash_layout, drawing, fmt, kind_label, resolve
 
 log = logging.getLogger(__name__)
 
@@ -199,19 +199,11 @@ def _shape(node: Node, box: Box, smap: dict[int, int]) -> str:
     if w <= 0 or h <= 0:
         return ""
     shape = drawing(node.shape_kind, x, y, w, h, smap)
-    width = max(1.0, node.stroke_width) * 1.5
     colours = {
         "fill": node.fill.hex if node.fill else "transparent",
         "stroke": _hex(node.stroke, DEFAULT_STROKE),
     }
-    if shape.is_rect:
-        parts = [
-            f'<rect x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}" '
-            f'fill="{colours["fill"]}" {_stroke(node.stroke_style, colours["stroke"], width)}/>'
-        ]
-    else:
-        parts = [_section(i, sec, colours, node.stroke_style, width) for i, sec in enumerate(shape.sections)]
-    markup = "".join(parts)
+    markup = "".join(_section(i, sec, colours, node.stroke_style) for i, sec in enumerate(shape.sections))
     if not node.html or shape.text is None or shape.text[2] <= 0 or shape.text[3] <= 0:
         return markup
     tx, ty, tw, th = shape.text
@@ -224,14 +216,28 @@ def _shape(node: Node, box: Box, smap: dict[int, int]) -> str:
     )
 
 
-def _section(index: int, sec: Section, colours: dict[str, str], style: str, width: float) -> str:
+def _section(index: int, sec: Section, colours: dict[str, str], style: str) -> str:
+    """A fill section as one path; a stroke section as one path per subpath,
+    each with its own dash layout."""
     colour = colours[sec.colour]
-    rule = ' fill-rule="evenodd"' if sec.rule == "evenodd" else ""
     if sec.paint == "fill":
+        rule = ' fill-rule="evenodd"' if sec.rule == "evenodd" else ""
         return f'<path data-part="{index}" d="{sec.d}" fill="{colour}"{rule} stroke="none"/>'
-    if colour == "transparent":
+    if colour == "transparent" or style == "none":
         return ""
-    return f'<path data-part="{index}" d="{sec.d}" fill="none" {_stroke(style, colour, width)}/>'
+    width = SHAPE_LINE_WIDTH
+    paths = []
+    for j, sub in enumerate(sec.subpaths):
+        dashes, offset = dash_layout(sub, width, sec.dash_mode) if style == "dashed" else ([], 0.0)
+        if dashes:
+            attrs = (
+                f'stroke="{colour}" stroke-width="{fmt(width)}" stroke-dasharray="{",".join(_fine(v) for v in dashes)}" '
+                f'stroke-dashoffset="{_fine(offset)}" stroke-linecap="round"'
+            )
+        else:
+            attrs = _stroke("solid" if style == "dashed" else style, colour, width)
+        paths.append(f'<path data-part="{index}" data-sub="{j}" d="{sub.d}" fill="none" {attrs}/>')
+    return "".join(paths)
 
 
 def _free_text(node: Node, box: Box) -> str:
@@ -290,15 +296,24 @@ def path_data(path: Route) -> str:
 
 
 def _stroke(style: str, colour: str, width: float) -> str:
-    """Stroke attributes for a stroke style (none, solid, dashed, dotted)."""
+    """Stroke attributes for a line style, with the editor's patterns: dashes
+    repeat every 12 line widths (60% dash, round caps included), and dots are
+    round, one line width across, every 2.4 widths."""
     if style == "none":
         return 'stroke="none"'
     attrs = f'stroke="{colour}" stroke-width="{fmt(width)}"'
     if style == "dashed":
-        return attrs + f' stroke-dasharray="{fmt(max(4.0, width * 3))},{fmt(max(3.0, width * 2))}"'
+        period = DASH_PERIOD * width
+        core, gap = DASH_SHARE * period - width, (1 - DASH_SHARE) * period + width
+        return attrs + f' stroke-dasharray="{fmt(core)},{fmt(gap)}" stroke-linecap="round"'
     if style == "dotted":  # zero-length dashes with round caps draw dots
-        return attrs + f' stroke-dasharray="0,{fmt(width * 2)}" stroke-linecap="round"'
+        return attrs + f' stroke-dasharray="0,{fmt(width * 2.4)}" stroke-linecap="round"'
     return attrs
+
+
+def _fine(v: float) -> str:
+    """Two decimals: dash lists are long, and rounding errors add up along them."""
+    return f"{v:.2f}".rstrip("0").rstrip(".")
 
 
 def _xy(p: Point) -> str:

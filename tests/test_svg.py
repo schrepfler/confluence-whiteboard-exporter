@@ -62,14 +62,14 @@ def test_shapes_are_drawn_from_the_editors_definitions() -> None:
     svg = _svg_for([{"type": "shape", "shape": 3, "position": {"x": 100, "y": 50}, "size": {"x": 200, "y": 100}}])
     group = _shape_group(svg)
     assert 'data-kind="3"' in group and "<rect" not in group
-    # The rounded corner keeps the editor's fixed 35.2 radius: the outline
-    # starts 35.2 in from the top-left corner (0, 0) of the 200x100 box.
-    assert 'd="M 35.2 0 L 164.8 0 C' in group
+    # The rounded corner keeps the editor's fixed 35.2 radius, whatever the
+    # box: the top-left corner of the 200x100 box runs from (0, 35.2) to (35.2, 0).
+    assert 'd="M 0 35.2 C 0 15.8 15.8 0 35.2 0 L 164.8 0 C' in group
 
 
-def test_a_sharp_rectangle_is_a_plain_rect() -> None:
+def test_a_sharp_rectangle_has_square_corners() -> None:
     group = _shape_group(_svg_for([{"type": "shape", "shape": 0, "position": {"x": 0, "y": 0}, "size": {"x": 10, "y": 10}}]))
-    assert "<rect " in group and "<path" not in group
+    assert 'd="M -5 -5 L 5 -5 L 5 5 L -5 5 L -5 -5 Z"' in group
 
 
 def test_a_kind_that_reuses_a_drawing_is_drawn_with_it() -> None:
@@ -236,16 +236,26 @@ def test_connector_routing_follows_its_presentation(presentation, routing) -> No
         assert all(a[0] == b[0] or a[1] == b[1] for a, b in itertools.pairwise(pts)), "right angles only"
 
 
-def test_stroke_styles() -> None:
-    def stroke(style: int) -> str:
-        return re.search(r"<rect [^>]*>", _svg_for([
-            {"type": "shape", "position": {"x": 0, "y": 0}, "size": {"x": 10, "y": 10}, "strokeStyle": style}
-        ])).group(0)
+def test_shape_outlines_are_three_units_wide_in_every_style() -> None:
+    def outline(style: int) -> str | None:
+        group = _shape_group(_svg_for([
+            {"type": "shape", "position": {"x": 0, "y": 0}, "size": {"x": 144, "y": 72}, "strokeStyle": style}
+        ]))
+        m = re.search(r'<path data-part="1" data-sub="0"[^>]*>', group)
+        return m and m.group(0)
 
-    assert 'stroke="none"' in stroke(0)
-    assert "dasharray" not in stroke(1)
-    assert 'stroke-dasharray="4.5,3"' in stroke(2)
-    assert 'stroke-dasharray="0,3" stroke-linecap="round"' in stroke(3)
+    assert outline(0) is None, "no outline"
+    assert 'stroke-width="3"' in outline(1) and "dasharray" not in outline(1)
+    dashed = outline(2)
+    assert 'stroke-width="3"' in dashed and 'stroke-linecap="round"' in dashed
+    # A sharp rectangle's edges start and end mid-dash: core 18, gap 18.
+    assert re.search(r'stroke-dasharray="7.5,18,18,18,18,', dashed)
+
+
+@pytest.mark.parametrize(("style", "pattern"), [(2, 'stroke-dasharray="12.4,11.6"'), (3, 'stroke-dasharray="0,4.8"')])
+def test_connector_patterns_follow_the_editor(style: int, pattern: str) -> None:
+    edge = _edge(_svg_for(_connector(strokeStyle=style, presentation=1)))
+    assert 'stroke-width="2"' in edge and pattern in edge and 'stroke-linecap="round"' in edge
 
 
 def test_a_covering_arrowhead_reaches_the_box_edge_from_where_the_line_stops() -> None:

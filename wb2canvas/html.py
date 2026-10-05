@@ -12,7 +12,17 @@ import json
 from .adf import _xml_escape
 from .board import Board, Kind
 from .connectors import ELBOW_STUB, TENSION
-from .shapes import resolve, stretching_commands
+from .shapes import (
+    CORNER_PHASE,
+    CORNER_SPAN,
+    DASH_PERIOD,
+    EDGE_EXTRA,
+    RUN_DASH,
+    RUN_PHASE,
+    TEXTURE_WINDOW,
+    resolve,
+    stretching_commands,
+)
 from .svg import svg_document, warn_placeholders
 
 _PAGE_CSS = (
@@ -33,6 +43,10 @@ def render_html(board: Board, shape_map: dict[int, int] | None = None) -> str:
         _VIEWER_JS.replace("__ELBOW_STUB__", str(ELBOW_STUB))
         .replace("__TENSION__", str(TENSION))
         .replace("__SHAPES__", json.dumps(drawings, separators=(",", ":")))
+        .replace("__DASH__", json.dumps({
+            "period": DASH_PERIOD, "window": TEXTURE_WINDOW, "cornerPhase": CORNER_PHASE,
+            "cornerSpan": CORNER_SPAN, "edgeExtra": EDGE_EXTRA, "runPhase": RUN_PHASE, "runDash": RUN_DASH,
+        }))
     )
     return "\n".join(
         [
@@ -57,7 +71,8 @@ _VIEWER_JS = r"""
 (function () {
   if (typeof document === 'undefined') return;
   var TENSION = __TENSION__, STUB = __ELBOW_STUB__;
-  var SHAPES = __SHAPES__;
+  var SHAPES = __SHAPES__, DASH = __DASH__;
+  var CORNER_COS = Math.cos(10 * Math.PI / 180);
   var SIDE_ANGLE = { right: 0, bottom: Math.PI / 2, left: Math.PI, top: -Math.PI / 2 };
   function init() {
     var svg = document.querySelector('svg');
@@ -68,10 +83,9 @@ _VIEWER_JS = r"""
     for (var i = 0; i < nodeEls.length; i++) {
       var g = nodeEls[i];
       var idx = g.getAttribute('data-id');
-      var rect = g.querySelector('rect');
       var fo = g.querySelector('foreignObject');
       var img = g.querySelector('image');
-      nodeMap.set(idx, { group: g, rect: rect, foreignObject: fo, image: img, kind: g.getAttribute('data-kind'), tx: 0, ty: 0 });
+      nodeMap.set(idx, { group: g, foreignObject: fo, image: img, kind: g.getAttribute('data-kind'), tx: 0, ty: 0 });
       enableDrag(g, idx);
     }
     var edgeEls = svg.querySelectorAll('path.wb-edge');
@@ -96,15 +110,17 @@ _VIEWER_JS = r"""
     autoFit();
     redrawAllEdges();
     enablePanZoom(svg);
+    // For tests: the routines the viewer shares with the exporter.
+    window.wb2canvasViewer = { route: route, pathData: pathData, subpaths: subpaths, subpathD: subpathD, dashLayout: dashLayout };
 
     function autoFit() {
-      // Grow shapes whose text overflows: a plain rect directly, any other
-      // drawing by re-resolving its sections for the new height (offsets,
-      // such as rounded corners, keep their size). scrollHeight is in the
-      // foreignObject's own user units, so no screen-CTM scaling.
+      // Grow shapes whose text overflows by re-resolving their drawing for the
+      // new height (offsets, such as rounded corners, keep their size) and
+      // laying their dashes out again. scrollHeight is in the foreignObject's
+      // own user units, so no screen-CTM scaling.
       nodeMap.forEach(function (nd) {
-        var fo = nd.foreignObject, rect = nd.rect, parts = nd.kind !== null && SHAPES[nd.kind];
-        if (!fo || (!rect && !parts)) return;
+        var fo = nd.foreignObject, shape = nd.kind !== null && SHAPES[nd.kind];
+        if (!fo || !shape) return;
         var box = fo.querySelector('div.node-text');
         if (!box) return;
         // scrollHeight is the height the text box needs, padding included.
@@ -114,26 +130,182 @@ _VIEWER_JS = r"""
         var delta = box.scrollHeight - foH;
         if (delta <= 1) return;
         var g = nd.group, h = parseFloat(g.getAttribute('data-h')) + delta;
+        var x = parseFloat(g.getAttribute('data-x')), y = parseFloat(g.getAttribute('data-y'));
+        var w = parseFloat(g.getAttribute('data-w'));
         fo.setAttribute('height', foH + delta);
-        if (rect) {
-          rect.setAttribute('height', parseFloat(rect.getAttribute('height')) + delta);
-        } else {
-          var x = parseFloat(g.getAttribute('data-x')), y = parseFloat(g.getAttribute('data-y'));
-          var w = parseFloat(g.getAttribute('data-w'));
-          g.querySelectorAll('path[data-part]').forEach(function (p) {
-            p.setAttribute('d', shapePath(parts[+p.getAttribute('data-part')], x, y, w, h));
-          });
-        }
+        g.querySelectorAll('path[data-part]').forEach(function (p) {
+          var subs = subpaths(shape.parts[+p.getAttribute('data-part')], x, y, w, h, shape.dashMode);
+          if (!p.hasAttribute('data-sub')) {
+            p.setAttribute('d', subs.map(subpathD).join(' '));
+            return;
+          }
+          var sub = subs[+p.getAttribute('data-sub')];
+          p.setAttribute('d', subpathD(sub));
+          if (p.hasAttribute('stroke-dasharray')) {
+            var layout = dashLayout(sub, parseFloat(p.getAttribute('stroke-width')), shape.dashMode);
+            if (layout.dashes.length) {
+              p.setAttribute('stroke-dasharray', layout.dashes.join(','));
+              p.setAttribute('stroke-dashoffset', layout.offset);
+            } else {
+              p.removeAttribute('stroke-dasharray');
+              p.removeAttribute('stroke-dashoffset');
+            }
+          }
+        });
         g.setAttribute('data-h', h);
       });
     }
-    // Mirrors shapes.path_data: a point is (x fraction, y fraction, x offset, y offset).
-    function shapePath(cmds, x, y, w, h) {
-      return cmds.map(function (c) {
-        return c[0] + c.slice(1).map(function (p) {
-          return ' ' + (x + p[0] * w + p[2]) + ' ' + (y + p[1] * h + p[3]);
-        }).join('');
-      }).join(' ');
+
+    // Shape outlines: a line-for-line port of shapes.py. A point is
+    // (x fraction, y fraction, x offset, y offset).
+    function subpaths(cmds, x, y, w, h, mode) {
+      var out = [], segs = [], cur = null;
+      function at(q) { return [x + q[0] * w + q[2], y + q[1] * h + q[3]]; }
+      function flush(closed) {
+        if (segs.length) out.push({ segments: closed ? reorder(segs, mode || 'runs') : segs, closed: closed });
+        segs = [];
+      }
+      cmds.forEach(function (c) {
+        if (c[0] === 'M') { flush(false); cur = at(c[1]); }
+        else if (c[0] === 'Z') flush(true);
+        else {
+          var ends = c.slice(1).map(at);
+          segs.push([cur].concat(ends));
+          cur = ends[ends.length - 1];
+        }
+      });
+      flush(false);
+      return out;
+    }
+    function subpathD(sub) {
+      if (!sub.segments.length) return '';
+      var d = 'M ' + sub.segments[0][0][0] + ' ' + sub.segments[0][0][1];
+      sub.segments.forEach(function (seg) {
+        d += (seg.length === 2 ? ' L ' : ' C ') + seg.slice(1).map(function (q) { return q[0] + ' ' + q[1]; }).join(' ');
+      });
+      return d + (sub.closed ? ' Z' : '');
+    }
+    function dashLayout(sub, width, mode) {
+      var period = DASH.period * width, lengths = sub.segments.map(segLength);
+      var total = lengths.reduce(function (a, b) { return a + b; }, 0), spans = [], s = 0, i, phase, step;
+      if (mode.indexOf('even') === 0) {
+        var n = Math.floor(total / period);
+        if (n === 0) return { dashes: [], offset: 0 };
+        lengths.forEach(function (len) { spans.push([s, len, s * n / total, (s + len) * n / total, DASH.window]); s += len; });
+      } else if (mode === 'corners') {
+        phase = sub.segments[0].length === 4 ? DASH.cornerPhase : DASH.cornerPhase + DASH.cornerSpan;
+        sub.segments.forEach(function (seg, k) {
+          step = seg.length === 4 ? DASH.cornerSpan : Math.floor(lengths[k] / period) + DASH.edgeExtra;
+          spans.push([s, lengths[k], phase, phase + step, DASH.window]);
+          s += lengths[k]; phase += step;
+        });
+      } else {
+        i = 0;
+        runs(sub).forEach(function (run) {
+          var runLengths = lengths.slice(i, i + run.length);
+          i += run.length;
+          var runTotal = runLengths.reduce(function (a, b) { return a + b; }, 0), n = Math.floor(runTotal / period);
+          var cap = n ? width / 2 / (runTotal / n) : 0, win = n ? [-cap, DASH.runDash + cap] : null;
+          phase = DASH.runPhase;
+          runLengths.forEach(function (len) {
+            step = runTotal ? len * n / runTotal : 0;
+            spans.push([s, len, phase, phase + step, win]);
+            s += len; phase += step;
+          });
+        });
+      }
+      var on = [];
+      spans.forEach(function (sp) {
+        if (sp[1] <= 0) return;
+        var pieces = sp[4] === null ? [[sp[0], sp[0] + sp[1]]] : visible(sp[0], sp[1], sp[2], sp[3], sp[4]);
+        pieces.forEach(function (pc) {
+          var last = on[on.length - 1];
+          if (last && pc[0] - last[1] < 1e-6) last[1] = pc[1]; else on.push([pc[0], pc[1]]);
+        });
+      });
+      if (!on.length || (on.length === 1 && on[0][0] < 1e-6 && on[0][1] > total - 1e-6)) return { dashes: [], offset: 0 };
+      var cores = on.map(function (o) {
+        if (o[1] - o[0] > width) return [o[0] + width / 2, o[1] - width / 2];
+        var mid = (o[0] + o[1]) / 2;
+        return [mid - 0.005, mid + 0.005];
+      });
+      var dashes = [];
+      cores.forEach(function (c, k) {
+        dashes.push(c[1] - c[0]);
+        dashes.push(k + 1 < cores.length ? cores[k + 1][0] - c[1] : total + width);
+      });
+      return { dashes: dashes, offset: -cores[0][0] };
+    }
+    function visible(start, len, p0, p1, win) {
+      var a = win[0], b = win[1], rate = (p1 - p0) / len, out = [];
+      for (var k = Math.floor(p0 - b); k <= Math.ceil(p1 - a); k++) {
+        var lo = Math.max(p0, k + a), hi = Math.min(p1, k + b);
+        if (hi > lo) out.push([start + (lo - p0) / rate, start + (hi - p0) / rate]);
+      }
+      return out;
+    }
+    function reorder(segs, mode) {
+      if (mode.indexOf('even') === 0) {
+        if (signedArea(segs) < 0) segs = segs.slice().reverse().map(function (seg) { return seg.slice().reverse(); });
+        var best = 0;
+        for (var i = 1; i < segs.length; i++) {
+          var p = segs[i][0], q = segs[best][0];
+          var better = mode === 'even-left' ? (p[0] < q[0] || (p[0] === q[0] && p[1] < q[1]))
+                                            : (-p[0] < -q[0] || (p[0] === q[0] && p[1] < q[1]));
+          if (better) best = i;
+        }
+        return segs.slice(best).concat(segs.slice(0, best));
+      }
+      for (var j = 0; j < segs.length; j++) {
+        if (isCorner(segs[(j + segs.length - 1) % segs.length], segs[j])) return segs.slice(j).concat(segs.slice(0, j));
+      }
+      return segs;
+    }
+    function signedArea(segs) {
+      var area = 0;
+      segs.forEach(function (seg, k) {
+        var a = seg[0], b = segs[(k + 1) % segs.length][0];
+        area += a[0] * b[1] - b[0] * a[1];
+      });
+      return area;
+    }
+    function runs(sub) {
+      var out = [];
+      sub.segments.forEach(function (seg) {
+        var last = out[out.length - 1];
+        if (last && !isCorner(last[last.length - 1], seg)) last.push(seg); else out.push([seg]);
+      });
+      return out;
+    }
+    function isCorner(a, b) {
+      var ta = unit(endTangent(a)), tb = unit(startTangent(b));
+      return ta[0] * tb[0] + ta[1] * tb[1] < CORNER_COS;
+    }
+    function startTangent(seg) {
+      for (var i = 1; i < seg.length; i++) {
+        if (seg[i][0] !== seg[0][0] || seg[i][1] !== seg[0][1]) return [seg[i][0] - seg[0][0], seg[i][1] - seg[0][1]];
+      }
+      return [0, 0];
+    }
+    function endTangent(seg) {
+      var e = seg[seg.length - 1];
+      for (var i = seg.length - 2; i >= 0; i--) {
+        if (seg[i][0] !== e[0] || seg[i][1] !== e[1]) return [e[0] - seg[i][0], e[1] - seg[i][1]];
+      }
+      return [0, 0];
+    }
+    function segLength(seg) {
+      if (seg.length === 2) return dist(seg[0], seg[1]);
+      var total = 0, prev = seg[0];
+      for (var i = 1; i <= 16; i++) {
+        var t = i / 16, u = 1 - t;
+        var q = [0, 1].map(function (k) {
+          return u * u * u * seg[0][k] + 3 * u * u * t * seg[1][k] + 3 * u * t * t * seg[2][k] + t * t * t * seg[3][k];
+        });
+        total += dist(prev, q);
+        prev = q;
+      }
+      return total;
     }
 
     function enableDrag(g, idx) {

@@ -200,6 +200,20 @@ How a kind is drawn depends on its renderer:
 | `ellipse`, `roundedPolygon`, `graphics` | the drawing, stretched to the box |
 | `replicate` | another kind's drawing (`replicatedShape`), e.g. decision = diamond |
 
+**Outlines** are always 3 units wide, whatever the shape's stroke size.
+Shapes are solid or dashed (they have no dotted style). A dash pattern
+repeats every 12 line widths, so 36 units. The editor lays it out per renderer:
+
+| Kinds | Dash layout |
+|---|---|
+| rounded rectangle, ellipse | A whole number of periods, evenly round the outline. The pattern runs clockwise, from where the top-left corner starts (rounded rectangle) or from the rightmost point (ellipse). |
+| the other rounded polygons | Each rounded corner sits inside one dash; each edge carries whole periods, stretched to fit. |
+| drawn shapes | Each stretch between sharp corners carries whole periods, starting and ending mid-dash. A stretch shorter than a period is solid. |
+
+On textured outlines a dash is 60% of the period, round ends included;
+drawn shapes use a 50% dash plus round ends. On a sample board this
+places "Dashed Box" dashes within about 2 units of the live board.
+
 Icons, the architecture set of the `advanced` category, are drawn at a fixed
 aspect ratio at the top of their box, with the label below (`exteriorTextArea`).
 Section colours are the shape's fill and line colours. A section may swap them:
@@ -347,7 +361,9 @@ except the waypoints. `wb2canvas` reimplements its router:
   `wb2canvas` uses a simpler route that leaves and enters perpendicular to
   the box edges, and takes a staircase through waypoints.
 
-Line thickness is 2, 4 or 6 board units for stroke sizes 1–3.
+Line thickness `w` is 2, 4 or 6 board units for stroke sizes 1–3. Dashed
+lines repeat every `12w` with a 60% dash, round ends included. Dotted lines
+are round dots `w` across, every `2.4w`.
 
 ### Line ends
 
@@ -418,9 +434,8 @@ top-left box `(x, y, w, h)`.
   by `k × h` with `k = −0.2` (right, leaning `/`) or `+0.2` (left, leaning
   `\`), so the shape extends past its box by 20% of its height.
 - **Arrowhead:** filled triangle of size `max(3 × stroke width, 6)`.
-- **Dash patterns:** dashed `12`, dotted `4`. The editor's own shape preview
-  dashes at `28, 16`; the live board's dashes look about as long as that
-  ratio suggests, and longer than the dashes `wb2canvas` draws (scaled to the
-  stroke width). Dotted lines are drawn as round dots.
+- **Dash patterns:** dashed `12`, dotted `4`. The editor's own patterns are
+  described above (outlines under "How the editor draws shapes", lines under
+  "Connector routing").
 - **Routing:** curved connectors pass through the waypoints with no end
   directions, dynamic ones are an orthogonal polyline, straight ones a line.

@@ -165,3 +165,30 @@ def test_the_viewer_routes_connectors_exactly_like_the_exporter(browser, tmp_pat
     for py, js in zip(exported, redrawn, strict=True):
         assert re.findall("[MLC]", js) == re.findall("[MLC]", py), (py, js)
         assert numbers(js) == pytest.approx(numbers(py), abs=0.06), (py, js)
+
+
+def test_the_viewer_lays_out_shape_outlines_exactly_like_the_exporter(browser, tmp_path: Path) -> None:
+    from wb2canvas.shapes import SHAPE_LINE_WIDTH, dash_layout, stretching_commands, subpaths
+
+    page, errors = _open(browser, tmp_path, render_html(load_board(FIXTURE)))
+    for kind in (0, 1, 2, 3, 4, 7, 10, 13, 22, 56, 84):
+        spec = stretching_commands(kind)
+        mode = spec["dashMode"]
+        for w, h in ((160, 110), (310, 64)):
+            for part in spec["parts"]:
+                py = [(s.d, dash_layout(s, SHAPE_LINE_WIDTH, mode)) for s in subpaths(part, 5, 7, w, h, mode)]
+                js = page.evaluate(
+                    """([cmds, w, h, mode]) => window.wb2canvasViewer.subpaths(cmds, 5, 7, w, h, mode).map(s => {
+                         const layout = window.wb2canvasViewer.dashLayout(s, 3, mode);
+                         return [window.wb2canvasViewer.subpathD(s), [layout.dashes, layout.offset]];
+                       })""",
+                    [part, w, h, mode],
+                )
+                assert len(js) == len(py), (kind, w, h)
+                for (pd, (pdash, poff)), (jd, (jdash, joff)) in zip(py, js, strict=True):
+                    nums = lambda d: [float(v) for v in re.findall(r"-?[0-9.]+(?:e-?[0-9]+)?", d)]  # noqa: E731
+                    assert re.findall("[MLCZ]", jd) == re.findall("[MLCZ]", pd), (kind, pd, jd)
+                    assert nums(jd) == pytest.approx(nums(pd), abs=0.06), (kind, pd, jd)
+                    assert jdash == pytest.approx(pdash, rel=1e-6, abs=1e-9), kind
+                    assert joff == pytest.approx(poff, rel=1e-6, abs=1e-9), kind
+    assert errors == []
