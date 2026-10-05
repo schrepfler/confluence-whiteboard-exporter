@@ -70,17 +70,21 @@ def test_dragging_a_node_moves_it_and_its_connector(browser, tmp_path: Path) -> 
 
 def test_auto_fit_grows_boxes_whose_text_overflows(browser, tmp_path: Path) -> None:
     html = render_html(load_board(FIXTURE))
-    # Undersize every text area so its content must overflow.
-    html = re.sub(r'(<rect [^>]*?\sheight=")[0-9.]+(")', r"\g<1>20\2", html)
+    # Undersize every shape's text area so its content must overflow.
     html = re.sub(r'(<foreignObject x="[^"]+" y="[^"]+" width="[^"]+" height=")[0-9.]+(">)', r"\g<1>8\2", html)
     page, errors = _open(browser, tmp_path, html)
     still_overflowing = page.evaluate(
-        """() => [...document.querySelectorAll('g.wb-node rect + foreignObject div.node-text')]
+        """() => [...document.querySelectorAll('g.wb-node:not(.wb-text) div.node-text')]
               .filter(d => d.scrollHeight > d.clientHeight + 1).length"""
     )
-    grown = float(page.locator('g.wb-node[data-id="shape-A"] rect').get_attribute("height"))
+    node = page.locator('g.wb-node[data-id="shape-A"]')
+    outline = node.locator("path[data-part]").first
     assert still_overflowing == 0
-    assert grown > 20
+    # The rounded rectangle is redrawn taller from the editor's drawing.
+    before = float(re.search(r'data-id="shape-A"[^>]*data-h="([^"]+)"', html).group(1))
+    data_h = float(node.get_attribute("data-h"))
+    assert data_h > before
+    assert outline.evaluate("p => p.getBBox().height") == pytest.approx(data_h, abs=0.5)
     assert errors == []
 
 

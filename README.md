@@ -33,7 +33,7 @@ and the property dictionary.
 | `fiber_probe.js` | Injected into the board page to capture its content |
 | `model.py` | Schema of the raw dump file |
 | `board.py` | Normalises either kind of dump into one `Board`; layout and stable ids |
-| `canvas.py`, `svg.py`, `html.py` | Renderers; `shapes.py` holds stereotype geometry, `connectors.py` the editor's connector router and line ends |
+| `canvas.py`, `svg.py`, `html.py` | Renderers; `shapes.py` draws the editor's shape definitions (`shape_data.json`), `connectors.py` holds the editor's connector router and line ends |
 | `deploy.py` | Writes outputs, optionally into an Obsidian vault |
 
 ## Setup
@@ -85,10 +85,10 @@ re-extract or re-render. `-v` shows progress detail.
 ### Output formats
 
 - **canvas**: editable in Obsidian. JSON Canvas cannot express dashed
-  borders, shape stereotypes, freehand lines, connector bends or line ends
+  borders, shapes, freehand lines, connector bends or line ends
   other than arrows, so status is conveyed by colour alone and dividers
   become thin cards.
-- **svg**: faithful static replica: shape stereotypes, dashed and dotted
+- **svg**: faithful static replica: the editor's shape drawings, dashed and dotted
   outlines, coloured free text, connectors routed the way the editor routes
   them (through their bend points), and the editor's line ends (arrows,
   diamonds, crow's feet, ...). Contains no script, so it is safe to embed
@@ -102,15 +102,16 @@ shape kinds without a stereotype, and line ends JSON Canvas lacks.
 SVG and HTML reference images relative to their own location, so keep them
 next to their `media/` folder.
 
-### Shape stereotypes
+### Shapes
 
-Confluence stores a shape's kind as a number. All 89 kinds, and how each is
-drawn, are listed in
-[docs/confluence-whiteboard-model.md](docs/confluence-whiteboard-model.md).
-The flowchart shapes have their own outlines; architecture icons and most UML
-shapes are drawn as rectangles. Override a mapping by kind name or number,
-e.g. `--shape-map 'database=hard-disk,60=ellipse'`. Stereotype names are
-listed in `convert --help`.
+Shapes are drawn from the whiteboard editor's own shape definitions, so
+outlines, rounded corners and text areas match the board. All 89 kinds are
+covered, except that the architecture icons (server, cloud, user, ...) are
+Atlassian artwork and are drawn as placeholders with their label below.
+Draw a kind as another with e.g. `--shape-map 'server=database'`.
+[docs/confluence-whiteboard-model.md](docs/confluence-whiteboard-model.md)
+lists the kinds and explains how to refresh the drawings after an editor
+update.
 
 ## Output layout
 

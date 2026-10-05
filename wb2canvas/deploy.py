@@ -29,7 +29,7 @@ def render(
     *,
     vault_prefix: str = "",
     collision_fix: bool = False,
-    shape_map: dict[int, str] | None = None,
+    shape_map: dict[int, int] | None = None,
 ) -> tuple[str, str]:
     """Return (file content, one-line summary) for `board` in `fmt`."""
     if fmt == "canvas":
@@ -49,7 +49,7 @@ def export_dump(
     vault_prefix: str = "",
     force: bool = False,
     collision_fix: bool = False,
-    shape_map: dict[int, str] | None = None,
+    shape_map: dict[int, int] | None = None,
 ) -> list[Written]:
     """Render one dump in each format.
 

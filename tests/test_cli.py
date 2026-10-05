@@ -68,7 +68,7 @@ def test_shape_map_rejects_unknown_stereotype(tmp_path: Path, extracted: Path) -
                "--shape-map", "4=elipse"],
     )
     assert result.exit_code != 0
-    assert "unknown" in result.output
+    assert "kind name" in result.output
 
 
 class FakeExtractor:

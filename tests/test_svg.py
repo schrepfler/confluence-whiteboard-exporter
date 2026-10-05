@@ -11,7 +11,6 @@ import pytest
 from wb2canvas.board import from_dump
 from wb2canvas.cli import _parse_shape_map
 from wb2canvas.model import DumpFile
-from wb2canvas.shapes import DEFAULT_SHAPE_MAP, GENERATORS, KIND_NAMES, STEREOTYPES, outline
 from wb2canvas.svg import render_svg
 
 
@@ -39,72 +38,15 @@ def test_dump_to_svg_emits_image_with_relative_path() -> None:
     assert 'href="media/3326b2e5-07e9-49ce-9b79-36a2d5a986fe.jpeg"' in svg
 
 
-def test_kind_names_cover_the_editor_enum() -> None:
-    assert len(KIND_NAMES) == 89
-    assert (KIND_NAMES[0], KIND_NAMES[3], KIND_NAMES[13], KIND_NAMES[88]) == (
-        "sharp-rectangle", "rounded-rectangle", "database", "control-object")
-
-
-def test_default_shape_map_draws_every_flowchart_kind() -> None:
-    assert DEFAULT_SHAPE_MAP[0] == "rect"
-    assert DEFAULT_SHAPE_MAP[3] == "rounded-rect"
-    assert DEFAULT_SHAPE_MAP[13] == "cylinder"
-    assert set(range(33)) <= DEFAULT_SHAPE_MAP.keys()
-    assert set(DEFAULT_SHAPE_MAP.values()) <= STEREOTYPES
-
-
-@pytest.mark.parametrize("name", sorted(GENERATORS.keys()))
-def test_path_generators_emit_valid_d_strings(name: str) -> None:
-    """Every path stereotype yields path data; all but the open comment
-    brackets are closed outlines."""
-    d = GENERATORS[name](0.0, 0.0, 100.0, 60.0)
-    assert d.startswith("M")
-    assert ("Z" in d) != name.startswith("comment-")
-
-
-def test_shape_outline_unknown_kind_falls_back_to_a_sharp_rect() -> None:
-    o = outline(99, 0.0, 0.0, 100.0, 60.0, DEFAULT_SHAPE_MAP)
-    assert (o.name, o.is_rect, o.radius) == ("rect", True, 0.0)
-
-
-def test_shape_without_a_kind_is_the_default_sharp_rectangle() -> None:
-    assert outline(None, 0.0, 0.0, 100.0, 60.0, DEFAULT_SHAPE_MAP).name == "rect"
-
-
-def test_shape_outline_resolves_cylinder() -> None:
-    o = outline(13, 0.0, 0.0, 100.0, 60.0, DEFAULT_SHAPE_MAP)
-    assert o.name == "cylinder" and o.d.startswith("M")
-
-
-def test_shape_outline_respects_override_map() -> None:
-    o = outline(99, 0.0, 0.0, 100.0, 60.0, {**DEFAULT_SHAPE_MAP, 99: "ellipse"})
-    assert o.name == "ellipse" and o.d.startswith("M")
-
-
-def test_rounded_rectangle_uses_atlassians_radius_and_sharp_has_none() -> None:
-    svg = _svg_for([
-        {"type": "shape", "shape": 3, "position": {"x": 0, "y": 0}, "size": {"x": 200, "y": 100}},
-        {"type": "shape", "shape": 0, "position": {"x": 300, "y": 0}, "size": {"x": 200, "y": 100}},
-    ])
-    rounded, sharp = re.findall(r"<rect [^>]*>", svg)
-    assert 'rx="20"' in rounded, "a tenth of the width"
-    assert "rx=" not in sharp
-
-
-def test_right_parallelogram_overhangs_its_box_like_atlassians() -> None:
-    d = outline(8, 0.0, 0.0, 100.0, 50.0, DEFAULT_SHAPE_MAP).d
-    assert d == "M 0 0 L 100 0 L 90 50 L -10 50 Z"
-
-
 def test_parse_shape_map_accepts_kind_numbers_and_names() -> None:
-    assert _parse_shape_map("database=hard-disk, 60=ellipse") == {13: "hard-disk", 60: "ellipse"}
+    assert _parse_shape_map("server=database, 60=ellipse") == {34: 13, 60: 2}
 
 
 def test_parse_shape_map_empty_returns_empty() -> None:
     assert _parse_shape_map("") == {}
 
 
-@pytest.mark.parametrize("spec", ["4=ellipse,bad-entry", "databse=ellipse", "4=elipse"])
+@pytest.mark.parametrize("spec", ["4=ellipse,bad-entry", "databse=ellipse", "4=elipse", "4=server", "4=99"])
 def test_parse_shape_map_rejects_bad_entries(spec: str) -> None:
     import click
 
@@ -112,25 +54,64 @@ def test_parse_shape_map_rejects_bad_entries(spec: str) -> None:
         _parse_shape_map(spec)
 
 
-def test_kinds_without_a_stereotype_are_reported(caplog) -> None:
+def _shape_group(svg: str) -> str:
+    return re.search(r'<g class="wb-node" .*?</g>', svg).group(0)
+
+
+def test_shapes_are_drawn_from_the_editors_definitions() -> None:
+    svg = _svg_for([{"type": "shape", "shape": 3, "position": {"x": 100, "y": 50}, "size": {"x": 200, "y": 100}}])
+    group = _shape_group(svg)
+    assert 'data-kind="3"' in group and "<rect" not in group
+    # The rounded corner keeps the editor's fixed 35.2 radius: the outline
+    # starts 35.2 in from the top-left corner (0, 0) of the 200x100 box.
+    assert 'd="M 35.2 0 L 164.8 0 C' in group
+
+
+def test_a_sharp_rectangle_is_a_plain_rect() -> None:
+    group = _shape_group(_svg_for([{"type": "shape", "shape": 0, "position": {"x": 0, "y": 0}, "size": {"x": 10, "y": 10}}]))
+    assert "<rect " in group and "<path" not in group
+
+
+def test_a_kind_that_reuses_a_drawing_is_drawn_with_it() -> None:
+    def outline(kind: int) -> str:
+        group = _shape_group(_svg_for([{"type": "shape", "shape": kind, "position": {"x": 0, "y": 0},
+                                        "size": {"x": 100, "y": 60}}]))
+        return re.sub(r'data-(kind|id)="[^"]+"', "", group)
+
+    assert outline(29) == outline(4), "decision reuses the diamond"
+
+
+def test_a_section_painted_with_the_stroke_colour_ignores_the_fill() -> None:
+    # The UML start node is a solid dot in the line colour, filled or not.
+    group = _shape_group(_svg_for([{"type": "shape", "shape": 80, "position": {"x": 0, "y": 0},
+                                    "size": {"x": 60, "y": 60}, "strokeColor": {"x": 0, "y": 85, "z": 204}}]))
+    assert 'fill="#0055CC"' in group
+
+
+def test_text_goes_in_the_drawings_text_area() -> None:
+    # A database's text sits below its lid, 52 units from the top.
+    group = _shape_group(_svg_for([{"type": "shape", "shape": 13, "position": {"x": 50, "y": 50},
+                                    "size": {"x": 100, "y": 100}, "text": _adf("x")}]))
+    fo = re.search(r'<foreignObject x="([^"]+)" y="([^"]+)"', group)
+    assert float(fo.group(2)) == pytest.approx(52)
+
+
+def test_icons_are_placeholders_with_their_label_below_and_are_reported(caplog) -> None:
     caplog.set_level(logging.WARNING)
     svg = _svg_for([
-        {"type": "shape", "shape": 60, "position": {"x": 0, "y": 0}, "size": {"x": 50, "y": 90}},
-        {"type": "shape", "shape": 60, "position": {"x": 90, "y": 0}, "size": {"x": 50, "y": 90}},
-        {"type": "shape", "shape": 3, "position": {"x": 200, "y": 0}, "size": {"x": 50, "y": 90}},
+        {"type": "shape", "shape": 34, "position": {"x": 50, "y": 75}, "size": {"x": 100, "y": 150}, "text": _adf("api")},
+        {"type": "shape", "shape": 34, "position": {"x": 250, "y": 75}, "size": {"x": 100, "y": 150}},
     ])
-    assert svg.count("<rect") == 3
+    group = _shape_group(svg)
+    fo_y = float(re.search(r'<foreignObject x="[^"]+" y="([^"]+)"', group).group(1))
+    assert fo_y == pytest.approx(100), "label below the square icon area"
     (msg,) = [r.getMessage() for r in caplog.records]
-    assert "actor (60) x2" in msg and "rounded" not in msg
+    assert "server (34) x2" in msg and "placeholders" in msg
 
 
-def test_dump_to_svg_shape_map_overrides_propagate() -> None:
-    """Mapping the fixture's shape kind 3 to ellipse should produce ellipse paths."""
-    svg = dump_to_svg(_dump(), shape_map={3: "ellipse"})
-    # The fixture's shape uses kind 3; with override it must become a <path>, not <rect>.
-    # Look for path elements with M command (path data) — at least one should exist
-    # for the shape; a default-rendered fixture would have <rect> instead.
-    assert "<path d=\"M " in svg
+def test_shape_map_draws_a_kind_as_another() -> None:
+    svg = dump_to_svg(_dump(), shape_map={3: 2})
+    assert 'data-kind="2"' in _shape_group(svg)
 
 
 def _svg_for(elements: list[dict]) -> str:
@@ -182,12 +163,10 @@ def test_long_text_wraps_and_grows_height_inside_the_viewbox() -> None:
         "text": _adf(LONG, LONG, LONG),
     }])
     _, vb_y, _, vb_h = map(float, re.search(r'viewBox="([^"]+)"', svg).group(1).split())
-    rect_y = float(re.search(r'<rect [^>]*?\sy="(-?[0-9.]+)"', svg).group(1))
-    rect_w = float(re.search(r'<rect [^>]*?\swidth="([0-9.]+)"', svg).group(1))
-    rect_h = float(re.search(r'<rect [^>]*?\sheight="([0-9.]+)"', svg).group(1))
-    assert rect_w == 160, "text wraps at the drawn width instead of widening the box"
-    assert rect_h > 160, "the box grows taller to fit the wrapped text"
-    assert vb_y + vb_h >= rect_y + rect_h, "the grown box must not be clipped by the viewBox"
+    y, w, h = (float(re.search(rf'data-{a}="(-?[0-9.]+)"', svg).group(1)) for a in "ywh")
+    assert w == 160, "text wraps at the drawn width instead of widening the box"
+    assert h > 160, "the box grows taller to fit the wrapped text"
+    assert vb_y + vb_h >= y + h, "the grown box must not be clipped by the viewBox"
 
 
 def test_connector_lands_on_the_drawn_basis_box_edge() -> None:

@@ -11,7 +11,7 @@ import click
 from dotenv import find_dotenv, load_dotenv
 
 from .model import BoardMeta
-from .shapes import KIND_BY_NAME, STEREOTYPES
+from .shapes import KIND_BY_NAME, KIND_NAMES, can_draw
 from .storage import dump_path
 
 if TYPE_CHECKING:
@@ -300,9 +300,9 @@ def extract(
     "--shape-map",
     "shape_map_str",
     default="",
-    help="(svg/html) Override how shape kinds are drawn, by kind number or name: "
-         "'database=hard-disk,60=ellipse'. Kinds are listed in docs/confluence-whiteboard-model.md. "
-         "Stereotypes: " + " ".join(sorted(STEREOTYPES)) + ".",
+    help="(svg/html) Draw shape kinds as other kinds, by number or name, e.g. "
+         "'server=database,60=ellipse'. Kinds are listed in docs/confluence-whiteboard-model.md; "
+         "icons cannot be targets.",
 )
 @click.pass_context
 def convert(
@@ -452,25 +452,28 @@ def _echo_results(results: list[Written]) -> None:
         click.echo(f"{verb} {r.path}  ({r.summary})")
 
 
-def _parse_shape_map(s: str) -> dict[int, str]:
-    """Parse 'database=hard-disk,60=ellipse' into {13: 'hard-disk', 60: 'ellipse'}."""
-    out: dict[int, str] = {}
+def _parse_shape_map(s: str) -> dict[int, int]:
+    """Parse 'server=database,60=ellipse' into {34: 13, 60: 2}."""
+    out: dict[int, int] = {}
     for entry in s.split(","):
         entry = entry.strip()
         if not entry:
             continue
         if "=" not in entry:
-            raise click.BadParameter(f"--shape-map entry {entry!r} missing '=' (e.g. 'database=hard-disk')")
+            raise click.BadParameter(f"--shape-map entry {entry!r} missing '=' (e.g. 'server=database')")
         k, _, v = (part.strip() for part in entry.partition("="))
-        kind = int(k) if k.isdigit() else KIND_BY_NAME.get(k)
-        if kind is None:
-            raise click.BadParameter(f"--shape-map key {k!r} is neither a kind number nor a kind name")
-        if v not in STEREOTYPES:
-            raise click.BadParameter(
-                f"--shape-map name {v!r} is unknown; choose from: {', '.join(sorted(STEREOTYPES))}"
-            )
-        out[kind] = v
+        kind, target = _shape_kind(k), _shape_kind(v)
+        if not can_draw(target):
+            raise click.BadParameter(f"--shape-map target {v!r} has no drawing (icons cannot be targets)")
+        out[kind] = target
     return out
+
+
+def _shape_kind(name: str) -> int:
+    kind = int(name) if name.isdigit() else KIND_BY_NAME.get(name)
+    if kind is None or kind not in KIND_NAMES:
+        raise click.BadParameter(f"--shape-map: {name!r} is neither a shape kind number nor a kind name")
+    return kind
 
 
 if __name__ == "__main__":

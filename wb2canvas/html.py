@@ -7,10 +7,13 @@ plain HTML page is the normal way to ship an interactive document.
 
 from __future__ import annotations
 
+import json
+
 from .adf import _xml_escape
-from .board import Board
+from .board import Board, Kind
 from .connectors import ELBOW_STUB, TENSION
-from .svg import svg_document, warn_unmapped
+from .shapes import resolve, stretching_commands
+from .svg import svg_document, warn_placeholders
 
 _PAGE_CSS = (
     "html,body{margin:0;height:100%;overflow:hidden;background:#fff;}"
@@ -19,10 +22,18 @@ _PAGE_CSS = (
 )
 
 
-def render_html(board: Board, shape_map: dict[int, str] | None = None) -> str:
+def render_html(board: Board, shape_map: dict[int, int] | None = None) -> str:
     title = _xml_escape(board.meta.title or board.meta.boardId)
-    svg, unmapped = svg_document(board, shape_map)
-    warn_unmapped("html", board, unmapped)
+    svg, placeholders = svg_document(board, shape_map)
+    warn_placeholders("html", board, placeholders)
+    # Drawings the viewer regrows when text overflows, keyed by data-kind.
+    kinds = {resolve(n.shape_kind, shape_map) for n in board.nodes if n.kind is Kind.SHAPE}
+    drawings = {k: cmds for k in sorted(kinds) if (cmds := stretching_commands(k))}
+    script = (
+        _VIEWER_JS.replace("__ELBOW_STUB__", str(ELBOW_STUB))
+        .replace("__TENSION__", str(TENSION))
+        .replace("__SHAPES__", json.dumps(drawings, separators=(",", ":")))
+    )
     return "\n".join(
         [
             "<!doctype html>",
@@ -35,7 +46,7 @@ def render_html(board: Board, shape_map: dict[int, str] | None = None) -> str:
             "</head>",
             "<body>",
             svg,
-            f"<script>{_VIEWER_JS.replace('__ELBOW_STUB__', str(ELBOW_STUB)).replace('__TENSION__', str(TENSION))}</script>",
+            f"<script>{script}</script>",
             "</body>",
             "</html>",
         ]
@@ -46,6 +57,7 @@ _VIEWER_JS = r"""
 (function () {
   if (typeof document === 'undefined') return;
   var TENSION = __TENSION__, STUB = __ELBOW_STUB__;
+  var SHAPES = __SHAPES__;
   var SIDE_ANGLE = { right: 0, bottom: Math.PI / 2, left: Math.PI, top: -Math.PI / 2 };
   function init() {
     var svg = document.querySelector('svg');
@@ -59,7 +71,7 @@ _VIEWER_JS = r"""
       var rect = g.querySelector('rect');
       var fo = g.querySelector('foreignObject');
       var img = g.querySelector('image');
-      nodeMap.set(idx, { group: g, rect: rect, foreignObject: fo, image: img, tx: 0, ty: 0 });
+      nodeMap.set(idx, { group: g, rect: rect, foreignObject: fo, image: img, kind: g.getAttribute('data-kind'), tx: 0, ty: 0 });
       enableDrag(g, idx);
     }
     var edgeEls = svg.querySelectorAll('path.wb-edge');
@@ -86,12 +98,13 @@ _VIEWER_JS = r"""
     enablePanZoom(svg);
 
     function autoFit() {
-      // Grow plain-rect nodes whose text overflows. scrollHeight/clientHeight
-      // are in the foreignObject's own user units, so no screen-CTM scaling.
-      // Non-rect outlines (cylinder, ...) would need their path regenerated.
+      // Grow shapes whose text overflows: a plain rect directly, any other
+      // drawing by re-resolving its sections for the new height (offsets,
+      // such as rounded corners, keep their size). scrollHeight is in the
+      // foreignObject's own user units, so no screen-CTM scaling.
       nodeMap.forEach(function (nd) {
-        var fo = nd.foreignObject, rect = nd.rect;
-        if (!fo || !rect) return;
+        var fo = nd.foreignObject, rect = nd.rect, parts = nd.kind !== null && SHAPES[nd.kind];
+        if (!fo || (!rect && !parts)) return;
         var box = fo.querySelector('div.node-text');
         if (!box) return;
         // scrollHeight is the height the text box needs, padding included.
@@ -100,10 +113,27 @@ _VIEWER_JS = r"""
         var foH = parseFloat(fo.getAttribute('height'));
         var delta = box.scrollHeight - foH;
         if (delta <= 1) return;
+        var g = nd.group, h = parseFloat(g.getAttribute('data-h')) + delta;
         fo.setAttribute('height', foH + delta);
-        rect.setAttribute('height', parseFloat(rect.getAttribute('height')) + delta);
-        nd.group.setAttribute('data-h', parseFloat(nd.group.getAttribute('data-h')) + delta);
+        if (rect) {
+          rect.setAttribute('height', parseFloat(rect.getAttribute('height')) + delta);
+        } else {
+          var x = parseFloat(g.getAttribute('data-x')), y = parseFloat(g.getAttribute('data-y'));
+          var w = parseFloat(g.getAttribute('data-w'));
+          g.querySelectorAll('path[data-part]').forEach(function (p) {
+            p.setAttribute('d', shapePath(parts[+p.getAttribute('data-part')], x, y, w, h));
+          });
+        }
+        g.setAttribute('data-h', h);
       });
+    }
+    // Mirrors shapes.path_data: a point is (x fraction, y fraction, x offset, y offset).
+    function shapePath(cmds, x, y, w, h) {
+      return cmds.map(function (c) {
+        return c[0] + c.slice(1).map(function (p) {
+          return ' ' + (x + p[0] * w + p[2]) + ' ' + (y + p[1] * h + p[3]);
+        }).join('');
+      }).join(' ');
     }
 
     function enableDrag(g, idx) {

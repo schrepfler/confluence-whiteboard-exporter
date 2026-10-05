@@ -178,88 +178,140 @@ channels (0–255).
 ## Shape kinds (`shape` / `sh`)
 
 `0` is the model's default and is not offered in the toolbar. Kinds 82–83
-are *composite* shapes (several parts). When Atlassian's own exporter meets
-a kind it cannot draw, it falls back to `rectangle`.
+are *composite* shapes (several parts). JSON Canvas has no shapes, so every
+kind becomes a card there.
 
-The **wb2canvas** column is the stereotype the SVG and HTML outputs draw
-(`rect` is sharp-cornered). A `*` means approximate. Kinds marked — have no
-stereotype: they are drawn as a sharp rectangle, as Atlassian's exporter does,
-and a warning names them. JSON Canvas has no shapes, so every kind becomes a
-card there.
+### How the editor draws shapes
 
-| # | Key | Name | wb2canvas |
-|---|---|---|---|
-| 0 | sharp-rectangle | Sharp rectangle (default; not in the picker) | rect |
-| 1 | rectangle | Rectangle | rect |
-| 2 | ellipse | Ellipse | ellipse |
-| 3 | rounded-rectangle | Rounded rectangle | rounded-rect |
-| 4 | diamond | Diamond | diamond |
-| 5 | triangle | Triangle (point up) | triangle |
-| 6 | upside-down-triangle | Upside down triangle | down-triangle |
-| 7 | left-parallelogram | Left parallelogram | left-parallelogram |
-| 8 | right-parallelogram | Right parallelogram | right-parallelogram |
-| 9 | start-end | Start or end | stadium |
-| 10 | document | Document | document |
-| 11 | off-page | Off-page connector | off-page |
-| 12 | input-output | Input or output | right-parallelogram |
-| 13 | database | Database | cylinder |
-| 14 | sum | Sum (summing junction) | circle-cross |
-| 15 | or | Or | circle-plus |
-| 16 | predefined-process | Predefined process | predefined-process |
-| 17 | internal-storage | Internal storage | internal-storage |
-| 18 | manual-input | Manual input | manual-input |
-| 19 | manual-operation | Manual operation | manual-operation |
-| 20 | multiple-documents | Multiple documents | document* |
-| 21 | preparation | Preparation | hexagon |
-| 22 | hard-disk | Hard disk | hard-disk |
-| 23 | comment-left | Comment left | comment-left |
-| 24 | comment-right | Comment right | comment-right |
-| 25 | stored-data | Stored data | stored-data |
-| 26 | delay | Delay | delay |
-| 27 | display | Display | display |
-| 28 | process | Process | rect |
-| 29 | decision | Decision | diamond |
-| 30 | connector | Connector | ellipse |
-| 31 | merge | Merge | down-triangle |
-| 32 | cloud | Cloud | cloud |
-| 33–51 | key, server, archive, browser, user, compute, computer, file, firewall, folder, frontend, internet, lock, mail, mobile, settings, shield, users, switch | Architecture icons | — |
-| 52 | database-advanced | Database (advanced; key derived from the enum name) | cylinder* |
-| 53 | alternate-process | Alternate process | rounded-rect |
-| 54 | use-case | Use case | ellipse |
-| 55 | classifier | Classifier | — |
-| 56 | note | Note | note |
-| 57 | interface-2 | Simple interface | — |
-| 58 | activation | Activation | — |
-| 59 | activity | Activity | rounded-rect |
-| 60 | actor | Actor | — |
-| 61 | assembly | Assembly | — |
-| 62 | component | Component | — |
-| 63 | deletion | Deletion | — |
-| 64 | end | End | ellipse* |
-| 65 | flow-final | Flow final | circle-cross |
-| 66 | gateway | Gateway | diamond |
-| 67 | history-pseudostate | History pseudostate | ellipse* |
-| 68 | horizontal-fork | Horizontal fork | — |
-| 69 | vertical-fork | Vertical fork | — |
-| 70 | off-page-link | Off-page link | off-page |
-| 71–75 | pin-filled-left, pin-filled-right, pin-left, pin-right, pin | Pins | — |
-| 76 | provided-interface | Provided interface | — |
-| 77 | receive-signal | Receive signal | — |
-| 78 | required-interface | Required interface | — |
-| 79 | send-signal | Send signal | — |
-| 80 | start | Start | ellipse* |
-| 81 | template | Template | — |
-| 82 | class | Class (composite) | — |
-| 83 | interface | Interface (composite) | — |
-| 84 | node | Node | — |
-| 85 | container | Container | — |
-| 86 | boundary-object | Boundary object | — |
-| 87 | entity-object | Entity object | — |
-| 88 | control-object | Control object | — |
+The editor ships a registry of shape definitions, one per kind
+(`shapeDefinitions`). Each carries a vector **drawing**: fill and stroke
+sections of lines and cubic curves. Its points are written as
+`(x fraction, y fraction, x offset, y offset)` and land at
+`box corner + fraction × box size + offset`. The outline stretches with the
+box, while offsets keep their size: a rounded rectangle's corners stay 35.2
+units whatever its width, and a database's lid stays 26 units. A drawing also
+defines its **text area**, and some kinds take no text at all.
 
-Use `--shape-map` to change a mapping, by number or by key, e.g.
-`--shape-map 'database=hard-disk,60=ellipse'`. The stereotype names are
-listed in `convert --help`.
+How a kind is drawn depends on its renderer:
+
+| Renderer | Meaning |
+|---|---|
+| `sharpRectangle` | a plain rectangle (kind 0 only) |
+| `ellipse`, `roundedPolygon`, `graphics` | the drawing, stretched to the box |
+| `replicate` | another kind's drawing (`replicatedShape`), e.g. decision = diamond |
+
+Icons, the architecture set of the `advanced` category, are drawn at a fixed
+aspect ratio at the top of their box, with the label below (`exteriorTextArea`).
+Section colours are the shape's fill and line colours. A section may swap them:
+the UML start node, for example, is a dot filled with the line colour.
+
+`wb2canvas` draws every kind from these definitions, stored in
+`wb2canvas/shape_data.json`. Icon artwork is Atlassian's and is not
+included, so icons are drawn as placeholders with their label below, and a
+warning names them. To refresh the data after an editor update:
+
+1. Paste `scripts/dump_shapes.js` into the DevTools console of an open whiteboard.
+   It reads the module the page has already loaded and copies a JSON dump.
+2. Run `pbpaste | uv run scripts/build_shape_data.py`.
+
+Atlassian's own SVG exporter does not use these drawings. It approximates a
+few shapes (for example, rounded corners at 10% of the width) and falls back
+to a rectangle for the rest.
+
+| # | Key | Name | Category | Drawn as |
+|---|---|---|---|---|
+| 0 | sharp-rectangle | Sharp rectangle (default; not in the picker) | — | plain rectangle |
+| 1 | rectangle | Rectangle | basic | own drawing |
+| 2 | ellipse | Ellipse | basic | own drawing |
+| 3 | rounded-rectangle | Rounded rectangle | basic | own drawing |
+| 4 | diamond | Diamond | basic | own drawing |
+| 5 | triangle | Triangle (point up) | basic | own drawing |
+| 6 | upside-down-triangle | Upside down triangle | basic | own drawing |
+| 7 | left-parallelogram | Left parallelogram | basic | own drawing |
+| 8 | right-parallelogram | Right parallelogram | basic | own drawing |
+| 9 | start-end | Start or end | flowchart | own drawing |
+| 10 | document | Document | flowchart | own drawing |
+| 11 | off-page | Off-page connector | flowchart | own drawing |
+| 12 | input-output | Input or output | flowchart | own drawing |
+| 13 | database | Database | flowchart | own drawing |
+| 14 | sum | Sum (summing junction) | flowchart | own drawing (no text) |
+| 15 | or | Or | flowchart | own drawing (no text) |
+| 16 | predefined-process | Predefined process | flowchart | own drawing |
+| 17 | internal-storage | Internal storage | flowchart | own drawing |
+| 18 | manual-input | Manual input | flowchart | own drawing |
+| 19 | manual-operation | Manual operation | flowchart | own drawing |
+| 20 | multiple-documents | Multiple documents | flowchart | own drawing |
+| 21 | preparation | Preparation | flowchart | own drawing |
+| 22 | hard-disk | Hard disk | flowchart | own drawing |
+| 23 | comment-left | Comment left | flowchart | own drawing |
+| 24 | comment-right | Comment right | flowchart | own drawing |
+| 25 | stored-data | Stored data | flowchart | own drawing |
+| 26 | delay | Delay | flowchart | own drawing |
+| 27 | display | Display | flowchart | own drawing |
+| 28 | process | Process | flowchart | same as 1 |
+| 29 | decision | Decision | flowchart | same as 4 |
+| 30 | connector | Connector | flowchart | same as 2 |
+| 31 | merge | Merge | flowchart | same as 6 |
+| 32 | cloud | Cloud | advanced | icon: placeholder, label below |
+| 33 | key | Key | advanced | icon: placeholder, label below |
+| 34 | server | Server | advanced | icon: placeholder, label below |
+| 35 | archive | Archive | advanced | icon: placeholder, label below |
+| 36 | browser | Browser | advanced | icon: placeholder, label below |
+| 37 | user | User | advanced | icon: placeholder, label below |
+| 38 | compute | Compute | advanced | icon: placeholder, label below |
+| 39 | computer | Computer | advanced | icon: placeholder, label below |
+| 40 | file | File | advanced | icon: placeholder, label below |
+| 41 | firewall | Firewall | advanced | icon: placeholder, label below |
+| 42 | folder | Folder | advanced | icon: placeholder, label below |
+| 43 | frontend | Frontend | advanced | icon: placeholder, label below |
+| 44 | internet | Internet | advanced | icon: placeholder, label below |
+| 45 | lock | Lock | advanced | icon: placeholder, label below |
+| 46 | mail | Mail | advanced | icon: placeholder, label below |
+| 47 | mobile | Mobile | advanced | icon: placeholder, label below |
+| 48 | settings | Settings | advanced | icon: placeholder, label below |
+| 49 | shield | Shield | advanced | icon: placeholder, label below |
+| 50 | users | Users | advanced | icon: placeholder, label below |
+| 51 | switch | Switch | advanced | icon: placeholder, label below |
+| 52 | database-advanced | Database (advanced; key derived from the enum name) | advanced | icon: placeholder, label below |
+| 53 | alternate-process | Alternate process | flowchart | same as 3 |
+| 54 | use-case | Use case | uml | same as 2 |
+| 55 | classifier | Classifier | uml | same as 16 |
+| 56 | note | Note | uml | own drawing |
+| 57 | interface-2 | Simple interface | uml | same as 1 |
+| 58 | activation | Activation | uml | same as 1 |
+| 59 | activity | Activity | uml | own drawing |
+| 60 | actor | Actor | uml | own drawing (label below) |
+| 61 | assembly | Assembly | uml | own drawing (no text) |
+| 62 | component | Component | uml | own drawing |
+| 63 | deletion | Deletion | uml | own drawing (no text) |
+| 64 | end | End | uml | own drawing (label below) |
+| 65 | flow-final | Flow final | uml | same as 14 |
+| 66 | gateway | Gateway | uml | same as 4 |
+| 67 | history-pseudostate | History pseudostate | uml | own drawing (no text) |
+| 68 | horizontal-fork | Horizontal fork | uml | own drawing (no text) |
+| 69 | vertical-fork | Vertical fork | uml | own drawing (no text) |
+| 70 | off-page-link | Off-page link | uml | own drawing |
+| 71 | pin-filled-left | Pin filled left | uml | own drawing (no text) |
+| 72 | pin-filled-right | Pin filled right | uml | own drawing (no text) |
+| 73 | pin-left | Pin left | uml | own drawing (no text) |
+| 74 | pin-right | Pin right | uml | own drawing (no text) |
+| 75 | pin | Pin | uml | own drawing (no text) |
+| 76 | provided-interface | Provided interface | uml | own drawing (no text) |
+| 77 | receive-signal | Receive signal | uml | own drawing |
+| 78 | required-interface | Required interface | uml | own drawing (no text) |
+| 79 | send-signal | Send signal | uml | own drawing |
+| 80 | start | Start | uml | own drawing (label below) |
+| 81 | template | Template | uml | same as 1 |
+| 82 | class | Class (composite) | uml | own drawing |
+| 83 | interface | Interface (composite) | uml | own drawing |
+| 84 | node | Node | uml | own drawing |
+| 85 | container | Container | uml | own drawing (no text) |
+| 86 | boundary-object | Boundary object | uml | own drawing |
+| 87 | entity-object | Entity object | uml | own drawing |
+| 88 | control-object | Control object | uml | own drawing |
+
+Use `--shape-map` to draw a kind as another, by number or key, e.g.
+`--shape-map 'server=database,60=ellipse'`. An icon cannot be a target.
 
 ## Connector and line enums
 
@@ -358,7 +410,8 @@ and waypoints are lost there too.
 Exporter positions are element centres; formulas here are restated for a
 top-left box `(x, y, w, h)`.
 
-- **Rounded rectangle:** corner radius `0.1 × w`.
+- **Rounded rectangle:** corner radius `0.1 × w` (the editor's own drawing
+  uses a fixed 35.2; see "How the editor draws shapes").
 - **Triangle:** apex at top centre; the upside-down variant has its apex at bottom centre.
 - **Diamond:** the four edge midpoints.
 - **Parallelograms:** the top edge spans the box. The bottom edge is shifted

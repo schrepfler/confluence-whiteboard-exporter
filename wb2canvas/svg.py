@@ -16,7 +16,7 @@ from collections import Counter
 from .adf import _xml_escape
 from .board import SVG_METRICS, Board, Box, Edge, Kind, Node, Point, Rgb, anchor_point, anchor_side, layout
 from .connectors import ARROWHEAD_SCALE, ARROWHEADS, End, Route, end_stub, route, thickness
-from .shapes import DEFAULT_SHAPE_MAP, fmt, kind_label, outline, stereotype, text_inset
+from .shapes import Section, drawing, fmt, kind_label, resolve
 
 log = logging.getLogger(__name__)
 
@@ -46,27 +46,27 @@ class _Bounds:
         return self.x0 == math.inf
 
 
-def render_svg(board: Board, shape_map: dict[int, str] | None = None) -> str:
-    svg, unmapped = svg_document(board, shape_map)
-    warn_unmapped("svg", board, unmapped)
+def render_svg(board: Board, shape_map: dict[int, int] | None = None) -> str:
+    svg, placeholders = svg_document(board, shape_map)
+    warn_placeholders("svg", board, placeholders)
     return svg
 
 
-def warn_unmapped(fmt_name: str, board: Board, unmapped: Counter[int | None]) -> None:
-    if unmapped:
-        counts = sorted(unmapped.items(), key=lambda kv: kv[0] or 0)
+def warn_placeholders(fmt_name: str, board: Board, placeholders: Counter[int]) -> None:
+    if placeholders:
+        counts = sorted(placeholders.items())
         kinds = ", ".join(kind_label(k) + (f" x{n}" if n > 1 else "") for k, n in counts)
-        log.warning("board %s %s: no stereotype for shape kinds %s; drawn as rectangles",
+        log.warning("board %s %s: no drawing for shape kinds %s; drawn as placeholders",
                     board.meta.boardId, fmt_name, kinds)
 
 
-def svg_document(board: Board, shape_map: dict[int, str] | None = None) -> tuple[str, Counter[int | None]]:
-    """The SVG markup, and how many shapes of each kind had no stereotype."""
-    smap = {**DEFAULT_SHAPE_MAP, **(shape_map or {})}
+def svg_document(board: Board, shape_map: dict[int, int] | None = None) -> tuple[str, Counter[int]]:
+    """The SVG markup, and how many shapes of each kind had no drawing."""
+    smap = shape_map or {}
     boxes = layout(board, SVG_METRICS)
     bounds = _Bounds()
-    unmapped: Counter[int | None] = Counter(
-        n.shape_kind for n in board.nodes if n.kind is Kind.SHAPE and stereotype(n.shape_kind, smap) is None
+    placeholders: Counter[int] = Counter(
+        d.kind for n in board.nodes if n.kind is Kind.SHAPE and (d := drawing(n.shape_kind, 0, 0, 1, 1, smap)).placeholder
     )
 
     # Nodes in source z-order; connectors last so arrowheads stay on top.
@@ -85,7 +85,7 @@ def svg_document(board: Board, shape_map: dict[int, str] | None = None) -> tuple
 
     if bounds.empty:
         empty = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"></svg>'
-        return empty, unmapped
+        return empty, placeholders
     vb_x = math.floor(bounds.x0 - MARGIN)
     vb_y = math.floor(bounds.y0 - MARGIN)
     vb_w = math.ceil(bounds.x1 - bounds.x0 + 2 * MARGIN)
@@ -103,7 +103,7 @@ def svg_document(board: Board, shape_map: dict[int, str] | None = None) -> tuple
             "</svg>",
         ]
     )
-    return svg, unmapped
+    return svg, placeholders
 
 
 def _defs(caps: set[tuple[str, int]]) -> str:
@@ -162,7 +162,7 @@ _STYLE = (
 )
 
 
-def _render_node(node: Node, box: Box, smap: dict[int, str]) -> str:
+def _render_node(node: Node, box: Box, smap: dict[int, int]) -> str:
     if node.kind is Kind.SHAPE:
         inner = _shape(node, box, smap)
     elif node.kind is Kind.TEXT:
@@ -184,41 +184,54 @@ def _render_node(node: Node, box: Box, smap: dict[int, str]) -> str:
         return ""
     x, y, w, h = box
     cls = "wb-node wb-text" if node.kind is Kind.TEXT else "wb-node"
+    kind = ""
+    if node.kind is Kind.SHAPE:
+        kind = f' data-kind="{resolve(node.shape_kind, smap)}"'
     return (
-        f'<g class="{cls}" data-id="{_xml_escape(node.id)}" '
+        f'<g class="{cls}" data-id="{_xml_escape(node.id)}"{kind} '
         f'data-x="{fmt(x)}" data-y="{fmt(y)}" data-w="{fmt(w)}" data-h="{fmt(h)}">'
         f"{inner}</g>"
     )
 
 
-def _shape(node: Node, box: Box, smap: dict[int, str]) -> str:
+def _shape(node: Node, box: Box, smap: dict[int, int]) -> str:
     x, y, w, h = box
     if w <= 0 or h <= 0:
         return ""
-    fill = node.fill.hex if node.fill else "transparent"
-    stroke = _stroke(node.stroke_style, _hex(node.stroke, DEFAULT_STROKE), max(1.0, node.stroke_width) * 1.5)
-    shape_outline = outline(node.shape_kind, x, y, w, h, smap)
-    if shape_outline.is_rect:
-        r = fmt(shape_outline.radius)
-        corners = f'rx="{r}" ry="{r}" ' if shape_outline.radius else ""
-        shape = (
+    shape = drawing(node.shape_kind, x, y, w, h, smap)
+    width = max(1.0, node.stroke_width) * 1.5
+    colours = {
+        "fill": node.fill.hex if node.fill else "transparent",
+        "stroke": _hex(node.stroke, DEFAULT_STROKE),
+    }
+    if shape.is_rect:
+        parts = [
             f'<rect x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}" '
-            f'{corners}fill="{fill}" {stroke}/>'
-        )
+            f'fill="{colours["fill"]}" {_stroke(node.stroke_style, colours["stroke"], width)}/>'
+        ]
     else:
-        shape = f'<path d="{shape_outline.d}" fill="{fill}" {stroke}/>'
-
-    top, right, bottom, left = text_inset(shape_outline.name, w, h)
-    tw, th = w - left - right, h - top - bottom
-    if not node.html or tw <= 0 or th <= 0:
-        return shape
-    return shape + (
-        f'<foreignObject x="{fmt(x + left)}" y="{fmt(y + top)}" width="{fmt(tw)}" height="{fmt(th)}">'
+        parts = [_section(i, sec, colours, node.stroke_style, width) for i, sec in enumerate(shape.sections)]
+    markup = "".join(parts)
+    if not node.html or shape.text is None or shape.text[2] <= 0 or shape.text[3] <= 0:
+        return markup
+    tx, ty, tw, th = shape.text
+    return markup + (
+        f'<foreignObject x="{fmt(tx)}" y="{fmt(ty)}" width="{fmt(tw)}" height="{fmt(th)}">'
         f'<div xmlns="http://www.w3.org/1999/xhtml" class="node-text" '
         f'style="text-align:{node.align};font-size:{_font_px(node)}px">'
         f'<div class="node-body va-{node.valign}">{node.html}</div></div>'
         "</foreignObject>"
     )
+
+
+def _section(index: int, sec: Section, colours: dict[str, str], style: str, width: float) -> str:
+    colour = colours[sec.colour]
+    rule = ' fill-rule="evenodd"' if sec.rule == "evenodd" else ""
+    if sec.paint == "fill":
+        return f'<path data-part="{index}" d="{sec.d}" fill="{colour}"{rule} stroke="none"/>'
+    if colour == "transparent":
+        return ""
+    return f'<path data-part="{index}" d="{sec.d}" fill="none" {_stroke(style, colour, width)}/>'
 
 
 def _free_text(node: Node, box: Box) -> str:
