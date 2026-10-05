@@ -171,7 +171,7 @@ def discover(ctx: click.Context, space: str, method: str) -> None:
 @click.option(
     "--vault-prefix",
     default="",
-    help="Subdirectory within the vault (passed through to convert).",
+    help="Subdirectory within the vault.",
 )
 @click.pass_context
 def extract(
@@ -281,20 +281,19 @@ def extract(
     "vault_dir",
     type=click.Path(file_okay=False, path_type=Path),
     default=None,
-    help="Path to your Obsidian vault. When set, the output + media/ are copied into "
-         "<vault>/<vault-prefix>/ and image paths are written relative to the vault root.",
+    help="Obsidian vault to write into: outputs and media/ go to <vault>/<vault-prefix>/. "
+         "Canvas image paths are written relative to the vault root, as Obsidian expects.",
 )
 @click.option(
     "--vault-prefix",
     default="",
-    help="Subdirectory within the vault (e.g. 'Whiteboards/Sample Board'). "
-         "Also prepended to image file paths.",
+    help="Subdirectory within the vault (e.g. 'Whiteboards/Sample Board').",
 )
 @click.option(
     "--collision-fix",
     is_flag=True,
-    help="Run an anti-collision pass on the JSON Canvas: nudges overlapping "
-         "nodes apart along the axis of least overlap, preserving stacks.",
+    help="(canvas) Nudge overlapping nodes apart along the axis of least overlap. "
+         "Off by default: some overlaps are deliberate in the source.",
 )
 @click.option(
     "--shape-map",
