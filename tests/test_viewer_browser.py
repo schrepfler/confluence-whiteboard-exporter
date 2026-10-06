@@ -152,6 +152,9 @@ def _parity_board():
         (2, 6, 3, (1, 0.5), (1, 0.5), [(-100, 250, 1)]),
         # An anchor near a corner, as on real boards: fractions keep their precision.
         (2, 1, 2, (1, 0.0388), (0.5, 0), [(300, -28, 1)]),
+        # Ends facing the same way go round the further one.
+        (2, 1, 2, (1, 0.5), (1, 0.5), []),
+        (2, 1, 2, (0.5, 0), (0.5, 0), []),
     ]
     for pr, sc, ec, sa, ta, wps in cases:
         i = len(els)
@@ -170,7 +173,7 @@ def test_the_viewer_routes_connectors_exactly_like_the_exporter(browser, tmp_pat
     exported = re.findall(r'<path class="wb-edge"[^>]*\sd="([^"]+)"', html)
     page, errors = _open(browser, tmp_path, html)
     redrawn = page.evaluate("() => [...document.querySelectorAll('path.wb-edge')].map(p => p.getAttribute('d'))")
-    assert errors == [] and len(redrawn) == len(exported) == 11
+    assert errors == [] and len(redrawn) == len(exported) == 13
 
     def numbers(d: str) -> list[float]:
         return [float(v) for v in re.findall(r"-?[0-9.]+(?:e-?[0-9]+)?", d)]

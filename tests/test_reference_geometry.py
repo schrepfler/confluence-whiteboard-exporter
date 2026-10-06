@@ -28,11 +28,7 @@ GOLDEN = Path(__file__).parent / "reference" / "golden" / "geometry.json"
 BOX_TOLERANCE = 1.5  # board units
 PATH_TOLERANCE = 2.0
 
-KNOWN_GAPS = {
-    "icon/aws": "a library icon is drawn as a square of its basis width",
-    "connector/dynamic sides (1, 0.5)->(1, 0.5)": "a right-angled route between ends on the same side "
-                                                  "differs from the editor's",
-}
+KNOWN_GAPS: dict[str, str] = {}  # cell name pattern: why we do not draw it like the editor yet
 
 CELLS = spec()
 

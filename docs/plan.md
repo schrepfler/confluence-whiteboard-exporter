@@ -108,7 +108,8 @@ built from code, with what the editor makes of it kept as the reference.
    `wb2canvas reference snapshot` writes `tests/reference/golden/geometry.json`;
    `tests/test_reference_geometry.py` runs one test per cell, offline.
    170 cells matched at first; 40 were known gaps, listed below.
-3. Close the gaps, one kind at a time, each flipping its cells to passing.
+3. ✅ Close the gaps, one kind at a time, each flipping its cells to
+   passing: all 208 cells now match the editor.
 4. Reference images, our renders and the report.
 5. `--live` and `--update-goldens`; images and library icons on the board.
 
@@ -123,11 +124,11 @@ Closed so far, each found by the reference board and checked against it:
 - ✅ **Growth to fit text**, through each shape's content box, after the
   editor's one-line minimum.
 
-Remaining, listed in `KNOWN_GAPS` in the test:
+- ✅ **Library icons**: a square of their basis width, any label below.
+- ✅ **Right-angled connectors between ends facing the same way**: they go
+  round the further end, 4 × line width + 10 beyond it.
 
-- **Library icons**: drawn as a square of their basis width.
-- **Right-angled connectors between ends on the same side** route
-  differently.
+`KNOWN_GAPS` in the test is empty; a new gap goes there with its cause.
 
 Measuring paths showed one difference that is not a gap: the editor's
 path runs to the end point under an arrowhead that covers the line, while

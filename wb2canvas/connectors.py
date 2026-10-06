@@ -140,7 +140,7 @@ def _dynamic(start: End, end: End, waypoints: tuple[Point, ...], axes: tuple[str
         s_ext, _ = end_stub(start.cap, stroke_size)
         t_ext, _ = end_stub(end.cap, stroke_size)
         stub = max(ELBOW_STUB, s_ext + 10, t_ext + 10)
-        pts = elbow_points(start.point, end.point, start.side, end.side, stub)
+        pts = elbow_points(start.point, end.point, start.side, end.side, stub, 4 * thickness(stroke_size) + 10)
     pts = _trim_ends(_drop_collinear(pts), start.cap, end.cap, stroke_size)
     return _rounded(pts, BEND_RADIUS)
 
@@ -380,13 +380,22 @@ def _bezier_angle(s: Point, c1: Point, c2: Point, e: Point, t: float) -> float:
     return math.atan2(dy, dx)
 
 
-def elbow_points(src: Point, tgt: Point, s_side: str | None, t_side: str | None, stub: float = ELBOW_STUB) -> list[Point]:
+def elbow_points(src: Point, tgt: Point, s_side: str | None, t_side: str | None, stub: float = ELBOW_STUB,
+                 margin: float = 18.0) -> list[Point]:
     """A right-angled route that leaves and enters perpendicular to the box
-    edges. Simpler than the editor's router: it does not avoid other shapes."""
+    edges. Simpler than the editor's router: it does not avoid other shapes.
+    Ends facing the same way turn `margin` beyond the further one, as the
+    editor's do; ends facing each other turn halfway between."""
     dx, dy = _delta(src, tgt)
     su, tu = _outward(s_side, dx, dy, True), _outward(t_side, dx, dy, False)
     a = (src[0] + su[0] * stub, src[1] + su[1] * stub)
     b = (tgt[0] + tu[0] * stub, tgt[1] + tu[1] * stub)
+    if su[0] and su == tu:  # both face the same way across: go round the further end
+        x = max(src[0], tgt[0]) + margin if su[0] > 0 else min(src[0], tgt[0]) - margin
+        return _drop_collinear([src, (x, src[1]), (x, tgt[1]), tgt])
+    if su[1] and su == tu:  # both face the same way up or down
+        y = max(src[1], tgt[1]) + margin if su[1] > 0 else min(src[1], tgt[1]) - margin
+        return _drop_collinear([src, (src[0], y), (tgt[0], y), tgt])
     if su[0] and tu[0]:  # out and in horizontally: turn halfway across
         mx = (a[0] + b[0]) / 2
         mid = [(mx, a[1]), (mx, b[1])]

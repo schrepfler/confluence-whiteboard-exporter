@@ -401,7 +401,7 @@ _VIEWER_JS = r"""
       if (handles) {
         pts = throughHandles(s, t, wps, axes, stroke);
       } else {
-        pts = elbow(s.p, t.p, s.side, t.side, Math.max(STUB, s.ext + 10, t.ext + 10));
+        pts = elbow(s.p, t.p, s.side, t.side, Math.max(STUB, s.ext + 10, t.ext + 10), 4 * stroke + 10);
       }
       return rounded(trim(dropCollinear(pts), s, t), BEND_RADIUS);
     }
@@ -509,10 +509,19 @@ _VIEWER_JS = r"""
       var dy = 3 * u * u * (c1[1] - s[1]) + 6 * u * t * (c2[1] - c1[1]) + 3 * t * t * (e[1] - c2[1]);
       return Math.atan2(dy, dx);
     }
-    function elbow(src, tgt, sSide, tSide, stub) {
+    function elbow(src, tgt, sSide, tSide, stub, margin) {
       var dx = tgt[0] - src[0], dy = tgt[1] - src[1];
       var su = outward(sSide, dx, dy, true), tu = outward(tSide, dx, dy, false);
       var a = [src[0] + su[0] * stub, src[1] + su[1] * stub], b = [tgt[0] + tu[0] * stub, tgt[1] + tu[1] * stub], mid;
+      var same = su[0] === tu[0] && su[1] === tu[1];
+      if (same && su[0]) {
+        var x = su[0] > 0 ? Math.max(src[0], tgt[0]) + margin : Math.min(src[0], tgt[0]) - margin;
+        return dropCollinear([src, [x, src[1]], [x, tgt[1]], tgt]);
+      }
+      if (same && su[1]) {
+        var y = su[1] > 0 ? Math.max(src[1], tgt[1]) + margin : Math.min(src[1], tgt[1]) - margin;
+        return dropCollinear([src, [src[0], y], [tgt[0], y], tgt]);
+      }
       if (su[0] && tu[0]) { var mx = (a[0] + b[0]) / 2; mid = [[mx, a[1]], [mx, b[1]]]; }
       else if (su[1] && tu[1]) { var my = (a[1] + b[1]) / 2; mid = [[a[0], my], [b[0], my]]; }
       else if (su[0]) mid = [[b[0], a[1]]];

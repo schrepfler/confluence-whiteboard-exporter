@@ -672,6 +672,9 @@ def node_box(node: Node, metrics: TextMetrics) -> Box:
     if node.kind is Kind.SHAPE and node.w > 0 and (area := text_area(node.shape_kind, node.w)):
         top, height = _grown_shape(node, area, metrics, m, md)
         return node.x, top, node.w, height
+    if node.kind is Kind.ICON and node.w > 0:  # a square drawing, with any label below it
+        top, height = _grown_shape(node, TextArea(node.w, 0.0, node.w, 1.0, 0.0, label_below=True), metrics, m, md)
+        return node.x, top, node.w, height
     return node.x, node.y, node.w, node.h
 
 
@@ -685,7 +688,7 @@ def _grown_shape(node: Node, area: TextArea, metrics: TextMetrics, m: TextMetric
     if md:
         measured = _wrapped_height(md, area.width, m, pad, pad)
     elif area.label_below:
-        measured = pad / 2  # an empty label still keeps its top padding
+        measured = 0.0  # just the drawing
     else:
         return y, h  # the editor never measures an empty shape
     if md and not area.label_below:  # drawings with a label below keep their own minimum
