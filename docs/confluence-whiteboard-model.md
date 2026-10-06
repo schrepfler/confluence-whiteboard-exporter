@@ -52,19 +52,56 @@ long property names from the dictionary below.
 clipboard, in `dimensions` and in Atlassian's exporter alike.
 
 Shapes, text and stickies also carry a *basis* box (`basisPosition`, again a
-centre, and `basisSize`): the box before its content grew it. Growth keeps
-one corner fixed, so the drawn box is:
+centre, and `basisSize`): the box before its content grew it. The editor
+lays them out from the basis box and grows it to fit measured content;
+`position` is the centre it writes back afterwards. Growth keeps one corner
+fixed, so for free text the drawn box is:
 
 ```
 size   = basisSize + 2 × |position − basisPosition|
 corner = position − size / 2
 ```
 
-A shape whose text needs more room grows downward, its top edge fixed.
-"Sources" on a sample board: basis height 110.3, centre 39.1
-below the basis centre, so it is drawn 188.5 high. Left-aligned free text
-grows rightward from its left edge, so a column of labels shares
+A **shape** has a fixed width and grows only downward (its sizing strategy:
+`withFlexibleWidth(false)`, `withVerticalGrowDirection("downward")`), so its
+drawn box is the basis box made `2 × (position.y − basisPosition.y)` taller
+when that is positive. "Sources" on a sample board: basis
+height 110.3, centre 39.1 below the basis centre, so it is drawn 188.5 high.
+A `position` shifted up or sideways is stale and ignored ("Service C"
+on Sample Board 4 sits 19.7 above its basis centre yet is drawn at
+its basis box), and so is any shift of a shape with no text, which the
+editor never measures (`isContentEmpty`). Left-aligned free text grows
+rightward from its left edge, so a column of labels shares
 `basisPosition.x − basisSize.x / 2`.
+
+### How text is laid out
+
+- **Type.** Paragraphs are `11.6 / 0.75` ≈ 15.47 px on a 22 px line
+  (`defaultTextSpacing`), in "Atlassian Sans"; headings h1–h6 are 27/32,
+  23/27, 18/23, 16/23, 14/18 and 13/18 px. There is no space between
+  paragraphs or round lists: a box is whole 22 px lines plus padding.
+- **Content box.** A shape's text goes in a content box
+  (`getConverterForShape`), then 12 units of padding on every side, scaled
+  by the font scale. The rectangle and rounded rectangle lose their corner
+  length, `144 × roundedness` (0.02 and 0.225), overall; the ellipse keeps
+  `1/√2` of the box, the diamond ½, the triangles half the width and height
+  shifted a quarter-height towards the base, the parallelograms half the
+  width. Drawn shapes use their drawing's text area; the sharp rectangle,
+  its whole box.
+
+With these, every shape on the five sample boards holds its text
+exactly, and the editor's line breaks are reproduced.
+
+### Colours
+
+Boards store colours as RGB values of the legacy Atlassian palette. The
+editor looks each one up by palette name (`elementColorMap`) and paints it
+with that name's design token in the current theme (`allColorMapTokenNames`),
+so stored `#172B4D` (text, `color.text`) is drawn `#292A2E`, the grey fill
+`#B3B9C4` (`n400`) `#B7B9BE`, and connector grey `#758195` (`n600`)
+`#7D818A` in the 2025 light theme. `wb2canvas/palette.json` holds the
+resolved table; `scripts/dump_palette.js` and `scripts/build_palette.py`
+regenerate it from a live board.
 
 The stored `size` of these elements is stale: every shape on a sample board has 160×160. Images, by contrast, are drawn at `position`/`size`,
 centred. Freehand `path` elements store absolute `start`/`end` points.
@@ -93,7 +130,8 @@ Each element type declares which box it uses
 | `image` | YImage | Uploaded image (Atlassian Media) | ✅ |
 | `path` | YPath | Freehand line, e.g. a divider | ✅ (straight segment) |
 | `pathWaypoint` | YPathWaypoint | Bend point of a connector | ✅ (bends its connector) |
-| `pathLabel` | YPathLabel | Label on a connector | ❌ |
+| `pathLabel` | YPathLabel | Label on a connector | ✅ (on its connector) |
+| `advanced-icon` | — | Library icon, e.g. AWS (`iconId`, `category`, `collection`) | ✅ (named placeholder) |
 | `sticky` | YSticky | Sticky note | ❌ |
 | `section` | YSection | Titled frame grouping elements | ❌ |
 | `group` | YGroup | Grouping without a frame | ❌ |
@@ -119,8 +157,14 @@ one needs a sample board containing it.
 
 A waypoint names its connector by `sourcePathIndex` (the connector's index in
 the clipboard array; in the Yjs document, `pi` is the connector's id). `order`
-sorts a connector's waypoints, and `axis` constrains how its handle can be
-dragged.
+sorts a connector's waypoints. On a right-angled connector `axis` says which
+segment a waypoint's handle pins: 0 a vertical segment at its x, 1 a
+horizontal one at its y.
+
+A label names its connector the same way. It sits at `proportion` of the
+path's length, centred on the line (`pathOffsetPosition` 0) or beside it
+(1 left, 2 right), on a background that hides the line, with 4 units of
+padding round its text.
 
 ## Property dictionary
 
@@ -357,9 +401,15 @@ except the waypoints. `wb2canvas` reimplements its router:
   - An end with no direction on a two-point curve leaves at angle
     `w + 0.68 · sin(2w − π)`, where `w` is the start-to-end angle.
 - **Straight** connectors are a polyline through the waypoints.
-- **Dynamic** connectors are right-angled and avoid other shapes.
-  `wb2canvas` uses a simpler route that leaves and enters perpendicular to
-  the box edges, and takes a staircase through waypoints.
+- **Dynamic** connectors are right-angled. Through waypoint handles
+  `wb2canvas` ports the editor's own algorithm
+  (`computeFindOrthogonalPathWithWaypoints`): coordinates alternate between
+  x and y, each handle pins its segment, and an end that would leave or
+  enter along the wrong axis first steps out of its box by `4w + 10` (`w`
+  the line thickness). Without handles it takes a simpler route, leaving
+  and entering perpendicular to the box edges; the editor's also avoids
+  other shapes. Bends are rounded with radius 10, or half the shorter
+  neighbouring segment.
 
 Line thickness `w` is 2, 4 or 6 board units for stroke sizes 1–3. Dashed
 lines repeat every `12w` with a 60% dash, round ends included. Dotted lines
