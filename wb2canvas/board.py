@@ -421,7 +421,7 @@ def _grown_box(centre: Point, size: Point | None, basis_centre: Point | None, ba
     """`position` is the centre of the drawn box. The basis box is the box
     before its content grew it; growth keeps one corner fixed, so the drawn
     size is the basis size plus twice the centre's shift. The stored `size`
-    is stale (160x160 for every shape on a sample board)."""
+    is stale (160x160 for every shape examined)."""
     cx, cy = centre
     if basis_size and basis_size[0] > 0 and basis_size[1] > 0:
         bx, by = basis_centre or centre

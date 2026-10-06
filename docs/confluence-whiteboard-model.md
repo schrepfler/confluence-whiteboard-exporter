@@ -65,12 +65,11 @@ corner = position − size / 2
 A **shape** has a fixed width and grows only downward (its sizing strategy:
 `withFlexibleWidth(false)`, `withVerticalGrowDirection("downward")`), so its
 drawn box is the basis box made `2 × (position.y − basisPosition.y)` taller
-when that is positive. "Sources" on a sample board: basis
-height 110.3, centre 39.1 below the basis centre, so it is drawn 188.5 high.
-A `position` shifted up or sideways is stale and ignored ("Service C"
-on Sample Board 4 sits 19.7 above its basis centre yet is drawn at
-its basis box), and so is any shift of a shape with no text, which the
-editor never measures (`isContentEmpty`). Left-aligned free text grows
+when that is positive: a shape with basis height 110 whose centre sits 40
+below the basis centre is drawn 190 high. A `position` shifted up or
+sideways is stale and ignored (a container whose centre sits 20 above its
+basis centre is drawn at its basis box), and so is any shift of a shape
+with no text, which the editor never measures (`isContentEmpty`). Left-aligned free text grows
 rightward from its left edge, so a column of labels shares
 `basisPosition.x − basisSize.x / 2`.
 
@@ -89,8 +88,8 @@ rightward from its left edge, so a column of labels shares
   width. Drawn shapes use their drawing's text area; the sharp rectangle,
   its whole box.
 
-With these, every shape on the five sample boards holds its text
-exactly, and the editor's line breaks are reproduced.
+With these, every shape on the boards compared with the live editor holds
+its text exactly, and the editor's line breaks are reproduced.
 
 ### Colours
 
@@ -103,7 +102,7 @@ so stored `#172B4D` (text, `color.text`) is drawn `#292A2E`, the grey fill
 resolved table; `scripts/dump_palette.js` and `scripts/build_palette.py`
 regenerate it from a live board.
 
-The stored `size` of these elements is stale: every shape on a sample board has 160×160. Images, by contrast, are drawn at `position`/`size`,
+The stored `size` of these elements is stale: every shape examined stores 160×160. Images, by contrast, are drawn at `position`/`size`,
 centred. Freehand `path` elements store absolute `start`/`end` points.
 
 A connector's clipboard `start`/`end` are computed from that stale `size`
@@ -255,8 +254,8 @@ repeats every 12 line widths, so 36 units. The editor lays it out per renderer:
 | drawn shapes | Each stretch between sharp corners carries whole periods, starting and ending mid-dash. A stretch shorter than a period is solid. |
 
 On textured outlines a dash is 60% of the period, round ends included;
-drawn shapes use a 50% dash plus round ends. On a sample board this
-places "Dashed Box" dashes within about 2 units of the live board.
+drawn shapes use a 50% dash plus round ends. On a dashed rounded rectangle
+this places the dashes within about 2 units of the live board's.
 
 Icons, the architecture set of the `advanced` category, are drawn at a fixed
 aspect ratio at the top of their box, with the label below (`exteriorTextArea`).
@@ -418,7 +417,7 @@ are round dots `w` across, every `2.4w`.
 ### Line ends
 
 The editor's arrowhead table, with the `diagrammingArrowheads` experiment
-on (as on the site examined; with it off, caps are a plain on/off arrow):
+on (as on the sites examined; with it off, caps are a plain on/off arrow):
 
 | Cap | Look | Size | Offset | Line under it |
 |---|---|---|---|---|

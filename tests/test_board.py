@@ -157,38 +157,37 @@ def test_fiber_dump_renders_in_every_format() -> None:
 
 
 def test_shapes_are_centred_on_position_and_grown_from_their_basis_box() -> None:
-    # "Sources" on a sample board: its text grew it from 110.3
-    # to 188.5 high, top edge fixed; the stored 160x160 size is stale.
-    board = _clip({"type": "shape", "position": {"x": -1127.8, "y": -824.5}, "size": {"x": 160, "y": 160},
-                   "basisPosition": {"x": -1127.8, "y": -863.6}, "basisSize": {"x": 221.9, "y": 110.3},
-                   "text": _text("Sources")})
+    # Text grew this shape from 110 to 190 high, top edge fixed: its centre
+    # moved 40 down. The stored 160x160 size is stale.
+    board = _clip({"type": "shape", "position": {"x": -1000, "y": -760}, "size": {"x": 160, "y": 160},
+                   "basisPosition": {"x": -1000, "y": -800}, "basisSize": {"x": 220, "y": 110},
+                   "text": _text("A list of sources")})
     x, y, w, h = node_box(board.nodes[0], CANVAS_METRICS)
-    assert (x, w) == pytest.approx((-1127.8 - 221.9 / 2, 221.9))
-    assert (y, h) == pytest.approx((-863.6 - 110.3 / 2, 188.5))
+    assert (x, w) == pytest.approx((-1000 - 220 / 2, 220))
+    assert (y, h) == pytest.approx((-800 - 110 / 2, 190))
 
 
 @pytest.mark.parametrize("text", [None, '{"version":1,"type":"doc","content":[]}',
                                   '{"type":"doc","content":[{"type":"paragraph","content":[]}]}'])
 def test_a_shape_without_text_is_drawn_at_its_basis_box(text: str | None) -> None:
     # The editor only grows a shape to fit its text; an empty shape keeps its
-    # basis box whatever its (then stale) position says. Sample values: the
-    # empty outline on Sample Board 2.
-    board = _clip({"type": "shape", "shape": 3, "position": {"x": 229.6, "y": -180.5}, "text": text,
-                   "basisPosition": {"x": 52.7, "y": -136.7}, "basisSize": {"x": 332.2, "y": 548.9}})
+    # basis box whatever its (then stale) position says, here 180 right of
+    # and 40 above the basis centre.
+    board = _clip({"type": "shape", "shape": 3, "position": {"x": 230, "y": -180}, "text": text,
+                   "basisPosition": {"x": 50, "y": -140}, "basisSize": {"x": 330, "y": 550}})
     n = board.nodes[0]
-    assert (n.x, n.y, n.w, n.h) == pytest.approx((52.7 - 166.1, -136.7 - 274.45, 332.2, 548.9))
+    assert (n.x, n.y, n.w, n.h) == pytest.approx((50 - 165, -140 - 275, 330, 550))
 
 
-@pytest.mark.parametrize(("dx", "dy"), [(0.0, -19.7), (-15.4, 0.0)])
+@pytest.mark.parametrize(("dx", "dy"), [(0.0, -20.0), (-15.0, 0.0)])
 def test_a_shape_only_grows_downward_to_fit_its_text(dx: float, dy: float) -> None:
     # The editor's shapes have a fixed width and grow downward; a position
-    # shifted up or sideways is stale. Sample values: "Service C"
-    # on Sample Board 4, and a box on Sample Board 5.
-    board = _clip({"type": "shape", "shape": 1, "text": _text("Service C"),
-                   "position": {"x": 400 + dx, "y": 223.1 + dy},
-                   "basisPosition": {"x": 400, "y": 223.1}, "basisSize": {"x": 320.6, "y": 716.5}})
+    # shifted up or sideways is stale, so a tall container keeps its basis box.
+    board = _clip({"type": "shape", "shape": 1, "text": _text("Container"),
+                   "position": {"x": 400 + dx, "y": 220 + dy},
+                   "basisPosition": {"x": 400, "y": 220}, "basisSize": {"x": 320, "y": 720}})
     n = board.nodes[0]
-    assert (n.x, n.y, n.w, n.h) == pytest.approx((400 - 160.3, 223.1 - 358.25, 320.6, 716.5))
+    assert (n.x, n.y, n.w, n.h) == pytest.approx((400 - 160, 220 - 360, 320, 720))
 
 
 def test_images_are_centred_on_position() -> None:
@@ -217,7 +216,7 @@ def test_free_text_sizes_to_its_content_not_its_placeholder() -> None:
     adf = json.dumps({"type": "doc", "content": [{"type": "bulletList", "content": [
         {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": t}]}]}
         for t in ("First list item here", "Second & third item", "Fourth bullet")]}]})
-    # Sample values: left-aligned, so the basis box's left edge stays put.
+    # Left-aligned, so the basis box's left edge stays put.
     board = _clip({"type": "text", "position": {"x": -1211.8, "y": -255.3}, "size": {"x": 76, "y": 38},
                    "basisPosition": {"x": -1291.3, "y": -277.3}, "basisSize": {"x": 34, "y": 38},
                    "allowFlexibleWidth": True, "text": adf})

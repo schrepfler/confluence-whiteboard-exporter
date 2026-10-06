@@ -6,8 +6,7 @@ rules behind each item are in
 
 ## Done
 
-Checked against the five boards of a sample space (Sample Board,
-Sample Board 2, Sample Board 3, Sample Board 4, Sample Board 5), side by side with the live editor:
+Checked board by board, side by side with the live editor:
 
 - Shapes, outlines and dashes from the editor's own shape definitions.
 - Box sizes: shapes keep their basis width and grow only downward to fit
@@ -32,11 +31,11 @@ Sample Board 2, Sample Board 3, Sample Board 4, Sample Board 5), side by side wi
 - **The font** is Atlassian Sans only where it is installed; elsewhere a
   system font stands in, so line breaks can differ slightly.
 - **Unsupported element types** (stickies, sections, tables, mind maps,
-  cards, Jira issues, …) are left out with a warning. None occur on the
-  sample boards; each needs a sample board to support.
+  cards, Jira issues, …) are left out with a warning. Supporting one needs
+  a sample board containing it.
 - **Dark theme**: colours are resolved against the light theme only.
 
 ## Next
 
-- Copy the exported space into the Obsidian vault
-  (`your Obsidian vault`); folder to be agreed.
+- Export a space straight into an Obsidian vault (`--vault`, `--vault-prefix`)
+  and check the canvases there.

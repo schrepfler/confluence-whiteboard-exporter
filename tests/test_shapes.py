@@ -61,7 +61,8 @@ def _dashes(layout: tuple[list[float], float], width: float = 3.0) -> list[tuple
 
 
 def test_a_rounded_rectangle_is_dashed_evenly_from_its_top_left_corner() -> None:
-    # The live board's "Dashed Box": 194.2 x 122.3, corner radius 35.2.
+    # A dashed rounded rectangle measured on a live board: 194.2 x 122.3,
+    # corner radius 35.2.
     stroke, sub = _outline(3, 194.2, 122.3)
     assert stroke.dash_mode == "even-left"
     assert sub.segments[0][0] == pytest.approx((0, 35.2)), "starts where the top-left corner starts"
