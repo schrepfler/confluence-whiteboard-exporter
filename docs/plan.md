@@ -56,7 +56,7 @@ built from code, with what the editor makes of it kept as the reference.
 
 ### Pieces
 
-1. **Spec** (`tests/reference/spec.py`): a grid of labelled cells, each
+1. **Spec** (`wb2canvas/reference.py`): a grid of labelled cells, each
    holding one variation with a caption naming it:
    - every shape kind, at two sizes; fill on and off; each stroke style
      and size; a sample of palette colours;
@@ -102,20 +102,33 @@ built from code, with what the editor makes of it kept as the reference.
 
 ### Order of work
 
-1. Spec, payload generator and pasting into a new board. The riskiest
-   step: does a pasted payload keep everything the tests need?
-2. Golden dump; move the existing geometry tests onto it.
-3. Reading the editor's drawn geometry, and the per-cell comparisons.
+1. ✅ Spec, payload generator and `wb2canvas reference create`: 208 cells,
+   548 elements, pasted and read back intact in about 30 seconds.
+2. Reading the editor's drawn geometry per cell, and the per-cell
+   comparisons. Moved ahead of the golden dump: see below.
+3. Golden dump and geometry; move the existing geometry tests onto them.
 4. Reference images, our renders and the report.
 5. `--live` and `--update-goldens`; images and library icons on the board.
+
+### Learnt from step 1
+
+- A paste keeps everything the spec sets: basis boxes, anchors, line
+  ends, routing, waypoint axes, label proportions and sides. Every
+  element moves by one offset, to where the canvas was clicked; captions
+  find the cells again.
+- **Growth is not stored on paste.** The editor grows a shape to fit its
+  text when it draws it, but writes the grown box back only when someone
+  edits the text. A pasted board, or one made by any tool, stores no
+  growth, so the stored data cannot be the reference for box sizes: the
+  editor's drawn geometry must be read at runtime. The same gap affects
+  exports of such boards: our static SVG draws an overflowing shape at its
+  stored size (the HTML viewer grows it).
 
 ### Open questions
 
 - Images need a real upload rather than a paste; how best to add them.
-- How large one board can grow before the editor slows down; the spec may
-  need splitting into several boards (shapes, text, connectors).
-- Whether a paste keeps positions exactly or shifts them to where the view
-  is; captions make cells findable either way.
+- How large one board can grow before the editor slows down; at 548
+  elements it is still quick.
 
 ## Later
 

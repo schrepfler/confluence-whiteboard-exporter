@@ -11,6 +11,11 @@ def storage_state_path() -> Path:
     return Path(user_config_dir("wb2canvas")) / "storage_state.json"
 
 
+def reference_state_path() -> Path:
+    """Which whiteboard is the reference board on which site, outside the repo."""
+    return Path(user_config_dir("wb2canvas")) / "reference.json"
+
+
 def chrome_profile_dir() -> Path:
     """Private, persistent profile for `auth attach`. Kept out of the shared
     system temp dir so other local users cannot pre-create or read it."""

@@ -123,6 +123,85 @@ def auth_attach(ctx: click.Context, port: int, close_after: bool) -> None:
     )
 
 
+REFERENCE_TITLE = "wb2canvas reference"
+
+
+@main.group()
+def reference() -> None:
+    """The reference board the tests compare against (see docs/plan.md)."""
+
+
+@reference.command("create")
+@click.option("--space", required=True, help="Space to put the board in, e.g. your personal space (~<account id>).")
+@click.option("--board", "board_id", help="Reuse this whiteboard; its title must start with "
+                                          f"'{REFERENCE_TITLE}'. It is cleared first.")
+@click.option("--headed", is_flag=True, help="Show the browser.")
+@click.pass_context
+def reference_create(ctx: click.Context, space: str, board_id: str | None, headed: bool) -> None:
+    """Build the reference board: create a whiteboard (or reuse the one
+    made before), clear it and paste every cell of the spec into it."""
+    import asyncio as _asyncio
+    import json as _json
+    from datetime import UTC, datetime
+
+    from .discover import create_whiteboard, get_whiteboard
+    from .reference import clipboard_html, payload, spec, spec_hash
+    from .storage import atomic_write_text, reference_state_path, storage_state_path
+
+    base_url, email, token = ctx.obj["base_url"], ctx.obj["email"], ctx.obj["token"]
+    if not (base_url and email and token):
+        click.echo("ERROR: set CONFLUENCE_BASE_URL, CONFLUENCE_EMAIL, CONFLUENCE_API_TOKEN.", err=True)
+        sys.exit(2)
+    state_path, session = reference_state_path(), storage_state_path()
+    if not session.exists():
+        click.echo(f"ERROR: no saved browser session at {session}. Run `wb2canvas auth attach` first.", err=True)
+        sys.exit(2)
+    state = _json.loads(state_path.read_text()) if state_path.exists() else {}
+    known = state if (state.get("base_url"), state.get("space")) == (base_url, space) else {}
+
+    board_id = board_id or known.get("board_id")
+    if board_id:
+        with _rest_errors(base_url, email, token, f"whiteboard {board_id}"):
+            meta = get_whiteboard(base_url, email, token, board_id, space_key=space)
+        if board_id != known.get("board_id") and not meta.title.startswith(REFERENCE_TITLE):
+            click.echo(f"ERROR: whiteboard {board_id} is titled {meta.title!r}; refusing to clear a board "
+                       f"that is not a reference board (its title must start with '{REFERENCE_TITLE}').", err=True)
+            sys.exit(2)
+    else:
+        with _rest_errors(base_url, email, token, f"space {space!r}"):
+            meta = create_whiteboard(base_url, email, token, space, REFERENCE_TITLE)
+        board_id = meta.boardId
+        click.echo(f"created whiteboard {board_id} in {space}")
+
+    cells = spec()
+    elements = payload(cells)
+    _asyncio.run(_build_reference(base_url, space, board_id, clipboard_html(elements), len(elements),
+                                  session, headless=not headed))
+    atomic_write_text(state_path, _json.dumps({
+        "base_url": base_url, "space": space, "board_id": board_id, "spec_hash": spec_hash(elements),
+        "elements": len(elements), "built": datetime.now(UTC).isoformat(timespec="seconds"),
+    }, indent=2))
+    click.echo(f"reference board {board_id}: {len(cells)} cells, {len(elements)} elements")
+
+
+async def _build_reference(base_url: str, space: str, board_id: str, html: str, expected: int,
+                           session: Path, *, headless: bool) -> None:
+    from .editor import browser_context, clear_board, element_count, open_board, paste
+
+    async with browser_context(session, headless=headless) as browser:
+        page, frame = await open_board(browser, base_url, space, board_id)
+        if await element_count(frame):
+            await clear_board(page, frame)
+        await paste(page, frame, html, expected)
+        await page.close()
+        # Read it back from a fresh page: what reached the server.
+        page, frame = await open_board(browser, base_url, space, board_id)
+        stored = await element_count(frame)
+        await page.close()
+    if stored != expected:
+        raise click.ClickException(f"the board holds {stored} elements after reloading, not {expected}")
+
+
 @main.command()
 @click.argument("space")
 @click.option("--method", type=click.Choice(["tree", "cql"]), default="tree", show_default=True)

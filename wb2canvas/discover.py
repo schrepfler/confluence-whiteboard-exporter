@@ -141,6 +141,15 @@ def _iter_via_tree(client: httpx.Client, space_key: str) -> Iterator[BoardMeta]:
                 queue.append((child_kind, str(child.get("id")), child))
 
 
+def create_whiteboard(base_url: str, email: str, api_token: str, space_key: str, title: str) -> BoardMeta:
+    """Create an empty whiteboard at the top of a space."""
+    with make_client(base_url, email, api_token) as client:
+        space = _resolve_space(client, space_key)
+        r = client.post("/wiki/api/v2/whiteboards", json={"spaceId": space["id"], "title": title})
+        r.raise_for_status()
+        return _v2_to_board_meta(r.json(), space_key)
+
+
 def _resolve_space(client: httpx.Client, space_key: str) -> dict[str, Any]:
     r = client.get("/wiki/api/v2/spaces", params={"keys": space_key, "limit": 1})
     r.raise_for_status()

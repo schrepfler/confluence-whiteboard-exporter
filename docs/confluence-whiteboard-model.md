@@ -62,6 +62,10 @@ size   = basisSize + 2 × |position − basisPosition|
 corner = position − size / 2
 ```
 
+The editor writes the grown box back (`position`) only when the text is
+edited. Pasted elements, and boards made by tools, store no growth even
+though the editor draws them grown.
+
 A **shape** has a fixed width and grows only downward (its sizing strategy:
 `withFlexibleWidth(false)`, `withVerticalGrowDirection("downward")`), so its
 drawn box is the basis box made `2 × (position.y − basisPosition.y)` taller

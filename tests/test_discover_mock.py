@@ -4,7 +4,7 @@ import httpx
 import pytest
 import respx
 
-from wb2canvas.discover import get_whiteboard, list_whiteboards_in_space
+from wb2canvas.discover import create_whiteboard, get_whiteboard, list_whiteboards_in_space
 
 
 BASE = "https://acme.atlassian.net"
@@ -286,3 +286,16 @@ def test_get_whiteboard_unresolvable_space_raises_instead_of_empty_key() -> None
     )
     with pytest.raises(ValueError, match="space key"):
         get_whiteboard(BASE, EMAIL, TOKEN, "5")
+
+
+@respx.mock
+def test_create_whiteboard_posts_to_the_space_id() -> None:
+    respx.get(f"{BASE}/wiki/api/v2/spaces").mock(
+        return_value=httpx.Response(200, json={"results": [{"id": "777", "key": "TEST"}]})
+    )
+    post = respx.post(f"{BASE}/wiki/api/v2/whiteboards").mock(
+        return_value=httpx.Response(200, json={"id": "4242", "title": "wb2canvas reference", "spaceId": "777"})
+    )
+    meta = create_whiteboard(BASE, EMAIL, TOKEN, "TEST", "wb2canvas reference")
+    assert (meta.boardId, meta.title, meta.spaceKey) == ("4242", "wb2canvas reference", "TEST")
+    assert post.calls.last.request.content == b'{"spaceId":"777","title":"wb2canvas reference"}'
