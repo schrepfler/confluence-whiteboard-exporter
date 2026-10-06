@@ -344,3 +344,19 @@ def test_a_colour_outside_the_palette_is_drawn_as_stored() -> None:
 
     assert drawn("#123456") == "#123456"
     assert drawn("#172b4d") == "#292A2E"
+
+
+def test_text_is_measured_in_the_editors_font_at_its_size() -> None:
+    from wb2canvas.board import EDITOR_FONT_PX, text_width
+
+    # Narrow letters really are narrower; widths are not a character count.
+    assert text_width("iiii", EDITOR_FONT_PX) < text_width("mmmm", EDITOR_FONT_PX) / 2
+    # The font changes proportions with size: twice the size is less than twice as wide.
+    assert text_width("scaled", 2 * EDITOR_FONT_PX) < 2 * text_width("scaled", EDITOR_FONT_PX)
+
+
+def test_a_font_scale_scales_text_set_at_the_editors_size() -> None:
+    # The editor lays scaled text out at its own size, then scales it.
+    from wb2canvas.board import EDITOR_FONT_PX, text_width
+
+    assert SVG_METRICS.scaled(2).width("scaled") == pytest.approx(2 * text_width("scaled", EDITOR_FONT_PX))

@@ -29,8 +29,6 @@ BOX_TOLERANCE = 1.5  # board units
 PATH_TOLERANCE = 2.0
 
 KNOWN_GAPS = {
-    "free text/*": "free text is padded 8 on each side in the editor, 24 in ours, and fixed-width text "
-                   "is drawn as flexible",
     "shape/60 actor": "drawings with a label below are drawn at their own aspect ratio plus the label",
     "shape/64 end": "drawings with a label below are drawn at their own aspect ratio plus the label",
     "shape/80 start": "drawings with a label below are drawn at their own aspect ratio plus the label",

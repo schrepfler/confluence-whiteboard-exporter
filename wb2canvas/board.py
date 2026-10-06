@@ -13,6 +13,7 @@ adapt those boxes to their text metrics.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 import re
@@ -21,7 +22,7 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
-from functools import cached_property
+from functools import cache, cached_property
 from pathlib import Path
 from typing import Any
 
@@ -330,7 +331,7 @@ def _clip_node(nid: str, e: ClipboardElement, media: dict[str, str], losses: _Lo
             align=e.alignment if e.alignment in _HALIGN else "left",
             valign="top",
             font_scale=_scale(e.fontScale),
-            auto_width=bool(e.allowFlexibleWidth),
+            auto_width=e.allowFlexibleWidth is not False,  # the editor's default is flexible
             adf=_fix_mojibake(e.text),
         )
     if e.type == "image" and e.fileId and e.position and e.size:
@@ -561,7 +562,7 @@ def _from_fiber(fd: FiberDump, media: dict[str, str], losses: _Losses) -> tuple[
                               color=Rgb.from_float32_be(raw.get("c")),
                               align=_FIBER_HALIGN.get(raw.get("a", 1), "left"), valign="top",
                               font_scale=_scale(_num(d.get("fs"), 1.0)),
-                              auto_width=bool(raw.get("fw"))))
+                              auto_width=raw.get("fw") is not False))
         elif t == "image" and raw.get("fi"):
             x, y, w, h = _centred(*_pair(d.get("p")), *_pair(d.get("s")))
             fid = str(raw["fi"])
@@ -577,26 +578,93 @@ def _from_fiber(fd: FiberDump, media: dict[str, str], losses: _Losses) -> tuple[
 # ------------------------------------------------------------------ layout
 
 
+# The editor's whiteboard text (defaultTextSpacing): paragraphs at 11.6/.75
+# px on a 22px line; headings at their own sizes (font px, line px), set
+# semibold. A list item is indented by LIST_INDENT_EM of the font size.
+EDITOR_FONT_PX = 11.6 / 0.75
+EDITOR_LINE_PX = 22.0
+EDITOR_HEADINGS = {1: (27, 32), 2: (23, 27), 3: (18, 23), 4: (16, 23), 5: (14, 18), 6: (13, 18)}
+LIST_INDENT_EM = 0.76
+# The editor lays text out at this share of its characters' summed widths
+# as a canvas measures them (text_metrics.json); the rest is kerning.
+WIDTH_FIT = 0.9845
+
+
 @dataclass(frozen=True)
 class TextMetrics:
-    """Rough text layout model for one renderer; used only to size boxes."""
+    """Rough text layout model for one renderer; used only to size boxes.
+
+    With `font_px` set, widths come from the editor's own font, measured
+    per character at the sizes it uses; otherwise every character is
+    `char_w` wide. A font scale scales the text after it is set (the editor
+    lays scaled text out at its own size, then scales it), not the font size.
+    """
 
     char_w: float  # average glyph advance, px
     line_h: float  # line height, px
-    pad_w: float  # total horizontal padding inside a node, px
-    pad_h: float  # total vertical padding inside a node, px
+    pad_w: float  # total horizontal padding inside a shape, px
+    pad_h: float  # total vertical padding inside a shape, px
     para_gap: float  # extra height per blank line, in lines
+    free_pad: float  # total padding round free text, either way, px; not scaled with the font
+    font_px: float | None = None  # the editor's font, unscaled
+    scale: float = 1.0  # the font scale
 
     def scaled(self, factor: float) -> TextMetrics:
         if factor == 1.0:
             return self
-        return replace(self, char_w=self.char_w * factor, line_h=self.line_h * factor)
+        return replace(self, char_w=self.char_w * factor, line_h=self.line_h * factor, scale=self.scale * factor)
+
+    def width(self, text: str, bold: bool = False, heading: int = 0) -> float:
+        if self.font_px is None:
+            return len(text) * self.char_w
+        px = EDITOR_HEADINGS[heading][0] if heading else self.font_px
+        return text_width(text, px, bold or bool(heading)) * self.scale
+
+    def line_height(self, heading: int = 0) -> float:
+        if heading and self.font_px is not None:
+            return self.line_h * EDITOR_HEADINGS[heading][1] / EDITOR_LINE_PX
+        return self.line_h
+
+    @property
+    def indent(self) -> float:
+        return LIST_INDENT_EM * self.font_px * self.scale if self.font_px else 3 * self.char_w
+
+
+def text_width(text: str, px: float, bold: bool = False) -> float:
+    """How wide the editor sets `text` at `px`: per-character widths of its
+    font, interpolated between the sizes they were measured at (the font
+    changes its proportions with size)."""
+    sizes = _width_table()["600" if bold else "400"]
+    ordered = sorted(sizes)
+    lo = max((z for z in ordered if z <= px), default=ordered[0])
+    hi = min((z for z in ordered if z >= px), default=ordered[-1])
+
+    def per_px(size: float) -> float:
+        table, fallback = sizes[size]
+        return sum(table.get(ch, fallback) for ch in text) / size
+
+    share = per_px(lo) if hi == lo else per_px(lo) + (per_px(hi) - per_px(lo)) * (px - lo) / (hi - lo)
+    return share * px * WIDTH_FIT
+
+
+@cache
+def _width_table() -> dict[str, dict[float, tuple[dict[str, float], float]]]:
+    data = json.loads(Path(__file__).with_name("text_metrics.json").read_text())
+    out: dict[str, dict[float, tuple[dict[str, float], float]]] = {}
+    for weight, sizes in data["weights"].items():
+        out[weight] = {}
+        for size, widths in sizes.items():
+            fallback = sum(widths[c] for c in "abcdefghijklmnopqrstuvwxyz") / 26  # an unmeasured character
+            out[weight][float(size)] = (widths, fallback)
+    return out
 
 
 # Obsidian canvas cards render ~16px text with generous card padding.
-CANVAS_METRICS = TextMetrics(char_w=7.5, line_h=22.0, pad_w=32.0, pad_h=36.0, para_gap=0.5)
-# The SVG renders the editor's 15.5px text on a 22px line with 12px padding.
-SVG_METRICS = TextMetrics(char_w=7.85, line_h=22.0, pad_w=24.0, pad_h=24.0, para_gap=0.15)
+CANVAS_METRICS = TextMetrics(char_w=7.5, line_h=22.0, pad_w=32.0, pad_h=36.0, para_gap=0.5, free_pad=32.0)
+# The SVG renders the editor's text in its font, 12px inside a shape and 8px
+# round free text, with no space between paragraphs.
+SVG_METRICS = TextMetrics(char_w=7.85, line_h=EDITOR_LINE_PX, pad_w=24.0, pad_h=24.0, para_gap=0.0,
+                          free_pad=16.0, font_px=EDITOR_FONT_PX)
 
 
 def node_box(node: Node, metrics: TextMetrics) -> Box:
@@ -609,7 +677,10 @@ def node_box(node: Node, metrics: TextMetrics) -> Box:
     m = metrics.scaled(node.font_scale)
     md = node.markdown
     if node.kind is Kind.TEXT and md:
-        tw, th = _unwrapped_bounds(md, m)
+        pad = metrics.free_pad
+        if not node.auto_width:  # a fixed width: the text wraps inside it and the box grows down
+            return node.x, node.y, node.w, max(node.h, _wrapped_height(md, node.w, m, pad, pad))
+        tw, th = _unwrapped_bounds(md, m, pad, pad)
         w, h = max(node.w, tw), max(node.h, th)
         # Text widens away from its aligned edge, as in the editor.
         shift = {"left": 0.0, "center": 0.5, "right": 1.0}.get(node.align, 0.0) * (w - node.w)
@@ -639,40 +710,70 @@ def anchor_side(anchor: Point) -> str | None:
 
 
 _LIST_PREFIX = re.compile(r"^\s*(?:[-*+]|\d+\.)\s+")
+_HEADING = re.compile(r"^(#{1,6})\s+")
 _MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 _MD_MARKS = re.compile(r"(\*\*|\*|`|~~)")
 
 
-def _plain(line: str) -> tuple[str, bool]:
-    """Visible text of a markdown line, and whether it is a list item."""
-    is_item = bool(_LIST_PREFIX.match(line))
-    text = _MD_LINK.sub(r"\1", _LIST_PREFIX.sub("", line))
-    return _MD_MARKS.sub("", text).strip(), is_item
+def _text_line(raw: str) -> tuple[str, bool, bool, int]:
+    """A markdown line's visible text, whether it is a list item, whether
+    it is all bold, and its heading level (0 for none)."""
+    heading = _HEADING.match(raw)
+    body = raw[heading.end():] if heading else raw
+    is_item = bool(_LIST_PREFIX.match(body))
+    text = _MD_LINK.sub(r"\1", _LIST_PREFIX.sub("", body)).strip()
+    bold = len(text) > 4 and text.startswith("**") and text.endswith("**")
+    return _MD_MARKS.sub("", text).strip(), is_item, bold, len(heading.group(1)) if heading else 0
 
 
-def _unwrapped_bounds(markdown: str, m: TextMetrics) -> tuple[float, float]:
-    width, lines = 0.0, 0.0
+def _unwrapped_bounds(markdown: str, m: TextMetrics, pad_w: float | None = None,
+                      pad_h: float | None = None) -> tuple[float, float]:
+    width, height = 0.0, 0.0
     for raw in markdown.splitlines():
-        text, is_item = _plain(raw)
+        text, is_item, bold, heading = _text_line(raw)
         if not text:
-            lines += m.para_gap
+            height += m.para_gap * m.line_h
             continue
-        width = max(width, (len(text) + (3 if is_item else 0)) * m.char_w)
-        lines += 1
-    return width + m.pad_w, lines * m.line_h + m.pad_h
+        width = max(width, (m.indent if is_item else 0.0) + m.width(text, bold, heading))
+        height += m.line_height(heading)
+    return width + _or(pad_w, m.pad_w), height + _or(pad_h, m.pad_h)
 
 
-def _wrapped_height(markdown: str, width: float, m: TextMetrics) -> float:
-    usable = max(m.char_w * 4, width - m.pad_w)
-    lines = 0.0
+def _or(value: float | None, default: float) -> float:
+    return default if value is None else value
+
+
+def _wrapped_height(markdown: str, width: float, m: TextMetrics, pad_w: float | None = None,
+                    pad_h: float | None = None) -> float:
+    """The height text needs in a box `width` wide, wrapped word by word
+    (a word wider than the line breaks anywhere, as the editor's does)."""
+    usable = max(m.char_w * 4, width - _or(pad_w, m.pad_w))
+    height = 0.0
     for raw in markdown.splitlines():
-        text, is_item = _plain(raw)
+        text, is_item, bold, heading = _text_line(raw)
         if not text:
-            lines += m.para_gap
+            height += m.para_gap * m.line_h
             continue
-        per_line = max(1, int((usable - (3 * m.char_w if is_item else 0)) // m.char_w))
-        lines += max(1, math.ceil(len(text) / per_line))
-    return lines * m.line_h + m.pad_h
+        lines = _wrapped_lines(text, usable - (m.indent if is_item else 0.0), m, bold, heading)
+        height += lines * m.line_height(heading)
+    return height + _or(pad_h, m.pad_h)
+
+
+def _wrapped_lines(text: str, available: float, m: TextMetrics, bold: bool, heading: int) -> int:
+    available = max(available, 1.0)
+    space = m.width(" ", bold, heading)
+    lines, current = 1, 0.0
+    for word in text.split():
+        w = m.width(word, bold, heading)
+        if current and current + space + w <= available:
+            current += space + w
+            continue
+        if current:
+            lines += 1
+        extra = max(0, math.ceil(w / available) - 1)
+        lines += extra
+        current = w - extra * available
+    return lines
 
 
 # ----------------------------------------------------------------- helpers

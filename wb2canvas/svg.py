@@ -14,7 +14,7 @@ import math
 from collections import Counter
 
 from .adf import _xml_escape
-from .board import SVG_METRICS, Board, Box, Edge, Kind, Label, Node, Point, Rgb, anchor_point, anchor_side, layout
+from .board import EDITOR_FONT_PX, EDITOR_HEADINGS, EDITOR_LINE_PX, LIST_INDENT_EM, SVG_METRICS, Board, Box, Edge, Kind, Label, Node, Point, Rgb, anchor_point, anchor_side, layout
 from .connectors import ARROWHEAD_SCALE, ARROWHEADS, End, Route, end_stub, point_at, route, thickness
 from .palette import drawn
 from .shapes import DASH_PERIOD, DASH_SHARE, SHAPE_LINE_WIDTH, Section, dash_layout, drawing, fmt, kind_label, resolve
@@ -24,12 +24,10 @@ log = logging.getLogger(__name__)
 DEFAULT_STROKE = drawn("#172B4D")  # the editor's default text and outline colour
 EDGE_DEFAULT_STROKE = drawn("#758195")
 MARGIN = 60
-# The editor's whiteboard text spacing: paragraphs at 11.6/.75 px on a 22 px
-# line; headings at their own sizes (font size, line height in px).
-BASE_FONT_PX = 11.6 / 0.75
-LINE_HEIGHT = 22 / BASE_FONT_PX
+BASE_FONT_PX = EDITOR_FONT_PX  # the editor's text spacing, shared with the layout model
+LINE_HEIGHT = EDITOR_LINE_PX / EDITOR_FONT_PX
 TEXT_PADDING = 12.0  # round a shape's text, inside its content box; grows with the font scale
-HEADINGS = {1: (27, 32), 2: (23, 27), 3: (18, 23), 4: (16, 23), 5: (14, 18), 6: (13, 18)}
+HEADINGS = EDITOR_HEADINGS
 FONT_FAMILY = ('"Atlassian Sans", ui-sans-serif, -apple-system, BlinkMacSystemFont, '
                '"Segoe UI", Ubuntu, "Helvetica Neue", sans-serif')  # the editor's stack
 LABEL_PADDING = 4.0  # round a connector label's text, as in the editor
@@ -171,7 +169,7 @@ _STYLE = (
     # No space between paragraphs or round lists: the editor sizes a box as
     # whole 22px lines plus padding.
     ".node-body p{margin:0;}"
-    ".node-body ul,.node-body ol{margin:0 0 0 18px;padding:0;text-align:left;}"
+    f".node-body ul,.node-body ol{{margin:0 0 0 {LIST_INDENT_EM}em;padding:0;text-align:left;}}"
     ".node-body li{margin:0;}"
     ".node-body li>p{margin:0;}"
     ".node-body strong{font-weight:600;}"
@@ -311,7 +309,7 @@ def _free_text(node: Node, box: Box) -> str:
         f'<foreignObject x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}" style="overflow:visible">'
         f'<div xmlns="http://www.w3.org/1999/xhtml" class="node-text node-free" '
         f'style="color:{_hex(node.color, DEFAULT_STROKE)};text-align:{node.align};'
-        f'font-size:{_font_px(node)}px;{nowrap}">'
+        f'font-size:{_font_px(node)}px;padding:{fmt(SVG_METRICS.free_pad / 2)}px;{nowrap}">'
         f'<div class="node-body">{node.html}</div></div>'
         "</foreignObject>"
     )
