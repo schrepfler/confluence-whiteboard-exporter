@@ -18,6 +18,7 @@ import math
 import re
 import struct
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import cached_property
@@ -102,7 +103,7 @@ class Kind(StrEnum):
 @dataclass(frozen=True)
 class Image:
     file_id: str
-    href: str  # relative to the dump's directory, e.g. "media/<id>.jpg"
+    href: str | None  # relative to the dump's directory, e.g. "media/<id>.jpg"; None if not downloaded
 
 
 @dataclass(eq=False)
@@ -193,6 +194,7 @@ class _Losses:
 
     elements: Counter[str] = field(default_factory=Counter)
     values: set[str] = field(default_factory=set)
+    missing_images: int = 0
 
     def enum(self, table: dict[int, str], value: Any, what: str, default: str) -> str:
         if value is None:
@@ -209,6 +211,9 @@ class _Losses:
             log.warning("board %s: omitted elements it cannot draw: %s", board_id, omitted)
         if self.values:
             log.warning("board %s: unknown %s; drawn with defaults", board_id, ", ".join(sorted(self.values)))
+        if self.missing_images:
+            log.warning("board %s: %d image(s) were not downloaded; drawn as placeholders",
+                        board_id, self.missing_images)
 
 
 # ------------------------------------------------------- clipboard adapter
@@ -218,6 +223,7 @@ def _from_clipboard(
     elements: list[ClipboardElement], media: dict[str, str], losses: _Losses
 ) -> tuple[list[Node], list[Edge]]:
     ids = stable_ids(elements)
+    media = _with_shared_pictures(media, ((e.fileId, e.imageHash) for e in elements if e.type == "image"))
     nodes: list[Node] = []
     edges: dict[int, Edge] = {}
     bends: dict[int, list[tuple[float, Point]]] = defaultdict(list)
@@ -278,7 +284,7 @@ def _clip_node(nid: str, e: ClipboardElement, media: dict[str, str], losses: _Lo
             id=nid,
             kind=Kind.IMAGE,
             x=x, y=y, w=w, h=h,
-            image=Image(e.fileId, media.get(e.fileId) or f"media/{e.fileId}"),
+            image=_image(e.fileId, media, losses),
         )
     if e.type == "path":
         start, end = _point(e.start), _point(e.end)
@@ -304,6 +310,22 @@ def _clip_edge(eid: str, e: ClipboardElement, ids: list[str], losses: _Losses) -
         stroke_style=losses.enum(STROKE_STYLES, e.strokeStyle, "stroke style", "solid"),
         stroke_size=int(e.stroke or 1),
     )
+
+
+def _with_shared_pictures(media: dict[str, str], images: Iterable[tuple[str | None, str | None]]) -> dict[str, str]:
+    """The canvas loads each picture once, so only one of several images
+    showing the same picture (same hash) may have been downloaded; the
+    others reuse its file."""
+    images = [(f, h) for f, h in images if f]
+    by_hash = {h: media[f] for f, h in images if h and f in media}
+    return {**{f: by_hash[h] for f, h in images if f not in media and h in by_hash}, **media}
+
+
+def _image(file_id: str, media: dict[str, str], losses: _Losses) -> Image:
+    href = media.get(file_id)
+    if href is None:
+        losses.missing_images += 1
+    return Image(file_id, href)
 
 
 def _drawn_box(e: ClipboardElement) -> Box:
@@ -403,6 +425,9 @@ def _from_fiber(fd: FiberDump, media: dict[str, str], losses: _Losses) -> tuple[
         if eid:
             dims[eid][prefix] = entry.get("val")
 
+    media = _with_shared_pictures(media, (
+        (str(v.get("fi")), v.get("ih")) for v in fd.board.values() if isinstance(v, dict) and v.get("t") == "image"
+    ))
     in_z = set(fd.zindex)
     order = list(fd.zindex) + [k for k in fd.board if k not in in_z]
     nodes: list[Node] = []
@@ -457,7 +482,7 @@ def _from_fiber(fd: FiberDump, media: dict[str, str], losses: _Losses) -> tuple[
             x, y, w, h = _centred(*_pair(d.get("p")), *_pair(d.get("s")))
             fid = str(raw["fi"])
             nodes.append(Node(id=eid, kind=Kind.IMAGE, x=x, y=y, w=w, h=h,
-                              image=Image(fid, media.get(fid) or f"media/{fid}")))
+                              image=_image(fid, media, losses)))
         else:
             # Includes paths: their points live outside `board` and are not captured.
             losses.elements[str(t)] += 1

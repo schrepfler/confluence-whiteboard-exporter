@@ -169,8 +169,16 @@ def _render_node(node: Node, box: Box, smap: dict[int, int]) -> str:
         inner = _free_text(node, box)
     elif node.kind is Kind.IMAGE and node.image:
         x, y, w, h = box
-        href = _xml_escape(node.image.href)
-        inner = f'<image x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}" href="{href}"/>'
+        if node.image.href:
+            href = _xml_escape(node.image.href)
+            inner = f'<image x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}" href="{href}"/>'
+        else:  # not downloaded: a placeholder rather than a broken link
+            inner = (
+                f'<rect x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}" fill="#F1F2F4" '
+                f'stroke="#B3B9C4" stroke-width="1" stroke-dasharray="4,3"/>'
+                f'<text x="{fmt(x + w / 2)}" y="{fmt(y + h / 2)}" text-anchor="middle" dominant-baseline="middle" '
+                f'font-size="{fmt(min(12.0, h / 3))}" fill="#626F86">image</text>'
+            )
     elif node.kind is Kind.LINE and len(node.points) == 2:
         (x1, y1), (x2, y2) = node.points
         width = thickness(int(node.stroke_width))

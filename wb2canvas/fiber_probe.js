@@ -51,6 +51,15 @@
     return board ? board.size : -1;
   }
 
+  function imageCount() {
+    const doc = getDocFromFiber();
+    const board = doc && doc.share && doc.share.get('board');
+    if (!board) return -1;
+    let n = 0;
+    board.forEach((el) => { if (el && typeof el.get === 'function' && el.get('t') === 'image') n++; });
+    return n;
+  }
+
   function dumpYDoc() {
     const doc = getDocFromFiber();
     if (!doc) throw new Error('Yjs Doc not found in React fiber');
@@ -126,6 +135,7 @@
     getDocFromFiber,
     docReady,
     boardSize,
+    imageCount,
     dumpYDoc,
     installClipboardCapture,
     resetCapture,

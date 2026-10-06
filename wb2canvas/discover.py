@@ -41,6 +41,20 @@ def make_client(base_url: str, email: str, api_token: str) -> httpx.Client:
     )
 
 
+def credentials_rejected(base_url: str, email: str, api_token: str) -> bool:
+    """Whether Confluence refuses these credentials. It then answers most
+    calls with 403, or with 404 as for an anonymous visitor, which reads
+    like a missing space or board."""
+    with make_client(base_url, email, api_token) as client:
+        r = client.get("/wiki/rest/api/user/current")
+    if r.status_code in (401, 403):
+        return True
+    try:
+        return r.status_code == 200 and r.json().get("type") == "anonymous"
+    except ValueError:
+        return False
+
+
 def list_whiteboards_in_space(
     base_url: str,
     email: str,

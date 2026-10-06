@@ -33,7 +33,12 @@ log = logging.getLogger(__name__)
 
 
 WHITEBOARD_URL = "{base}/wiki/spaces/{space}/whiteboard/{board}"
-MEDIA_RE = re.compile(r"https?://api\.media\.atlassian\.com/file/([0-9a-f-]{36})/binary")
+# Atlassian Media files, from the media API or the site's own proxy: the
+# original (/binary) or a rendition (/image), which is what the canvas loads
+# for small images.
+MEDIA_RE = re.compile(r"/file/([0-9a-f-]{36})/(binary|image)(?:[/?#]|$)")
+MEDIA_WAIT_S = 15.0  # how long to wait for the board's images after copying it
+COPY_RETRIES = 4  # the copy leaves out images that have not loaded yet
 FRAME_PATH_FRAGMENT = "/whiteboards/whiteboard/"
 
 _PROBE_JS = (Path(__file__).parent / "fiber_probe.js").read_text()
@@ -189,10 +194,11 @@ class Extractor:
         target_dump = dump_path(out_dir, board.spaceKey, board.boardId)
         target_media = media_dir(out_dir, board.spaceKey, board.boardId)
         media_map: dict[str, str] = {}
+        media_kinds: dict[str, str] = {}
         pending_media: set[asyncio.Task[None]] = set()
 
         def on_response(r: Response) -> None:
-            task = asyncio.create_task(_capture_media(r, target_media, media_map))
+            task = asyncio.create_task(_capture_media(r, target_media, media_map, media_kinds))
             pending_media.add(task)
             task.add_done_callback(pending_media.discard)
 
@@ -213,12 +219,25 @@ class Extractor:
             )
             await _wait_for_doc_populated(frame, timeout_ms=10_000)
             strategy, elements, fiber_dump = await self._capture(page, frame)
-            # Media bodies may still be streaming; closing the page first
-            # would drop them.
+            images = _image_files(elements, fiber_dump)
+            wanted = set(images)
+            if self.download_media:
+                # The canvas may still be loading images. It loads each picture
+                # once, however many elements show it, so wait per picture; then
+                # let any bodies still streaming finish (closing the page would
+                # drop them).
+                def missing() -> bool:
+                    have = {images[f] for f in media_map if f in images}
+                    return bool(set(images.values()) - have)
+
+                deadline = asyncio.get_running_loop().time() + MEDIA_WAIT_S
+                while missing() and asyncio.get_running_loop().time() < deadline:
+                    await asyncio.sleep(0.25)
             if pending_media:
                 await asyncio.wait(set(pending_media), timeout=60)
         finally:
             await page.close()
+        _keep_only(media_map, wanted, target_media)
 
         dump = DumpFile(
             board=board,
@@ -236,7 +255,7 @@ class Extractor:
         if self.strategy == "fiber":
             return "fiber", [], await _extract_via_fiber(frame)
         try:
-            return "clipboard", await _extract_via_clipboard(page, frame), None
+            return "clipboard", await _copy_with_images(page, frame), None
         except (PlaywrightTimeoutError, RuntimeError) as e:
             if self.strategy == "clipboard":
                 raise
@@ -372,12 +391,18 @@ async def _extract_via_fiber(frame: Frame) -> FiberDump:
     return FiberDump.model_validate(raw)
 
 
-async def _capture_media(response: Response, target_dir: Path, media_map: dict[str, str]) -> None:
+async def _capture_media(
+    response: Response, target_dir: Path, media_map: dict[str, str], kinds: dict[str, str]
+) -> None:
+    """Save a media file the page loaded. An original replaces a rendition
+    of the same file, never the other way round."""
+    if "media" not in response.url:
+        return
     m = MEDIA_RE.search(response.url)
     if not m:
         return
-    uuid = m.group(1)
-    if uuid in media_map:
+    uuid, kind = m.groups()
+    if kinds.get(uuid) in ("binary", kind):
         return
     if response.status >= 400:
         return
@@ -392,4 +417,38 @@ async def _capture_media(response: Response, target_dir: Path, media_map: dict[s
         out.write_bytes(body)
     except OSError:
         return
+    previous = media_map.get(uuid)
+    if previous and previous != f"media/{uuid}{ext}":
+        (target_dir.parent / previous).unlink(missing_ok=True)
     media_map[uuid] = f"media/{uuid}{ext}"
+    kinds[uuid] = kind
+
+
+def _image_files(elements: list[ClipboardElement], fiber_dump: FiberDump | None) -> dict[str, str]:
+    """The board's image files, each with the picture it shows (its hash)."""
+    files = {e.fileId: e.imageHash or e.fileId for e in elements if e.type == "image" and e.fileId}
+    if fiber_dump is not None:
+        for v in fiber_dump.board.values():
+            if isinstance(v, dict) and v.get("t") == "image" and v.get("fi"):
+                files[str(v["fi"])] = str(v.get("ih") or v["fi"])
+    return files
+
+
+async def _copy_with_images(page: Page, frame: Frame) -> list[ClipboardElement]:
+    """Copy the board, again if the copy is missing images that are still loading."""
+    expected = await frame.evaluate("globalThis.__wb2canvas.imageCount()")
+    for attempt in range(COPY_RETRIES):
+        elements = await _extract_via_clipboard(page, frame)
+        got = sum(1 for e in elements if e.type == "image")
+        if got >= expected:
+            return elements
+        log.info("copy holds %d of %d images; copying again once they load (%d)", got, expected, attempt + 1)
+        await page.wait_for_timeout(3_000)
+    log.warning("the copy still holds %d of %d images", got, expected)
+    return elements
+
+
+def _keep_only(media_map: dict[str, str], wanted: set[str], target_dir: Path) -> None:
+    """Drop files the page loaded that are not the board's images (avatars, icons)."""
+    for uuid in set(media_map) - wanted:
+        (target_dir.parent / media_map.pop(uuid)).unlink(missing_ok=True)

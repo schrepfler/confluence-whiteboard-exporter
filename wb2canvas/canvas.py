@@ -131,6 +131,8 @@ def _warn(board: Board, loose: int, dropped_caps: Counter[str]) -> None:
 def _node(n: Node, box: tuple[float, float, float, float], vault_prefix: str) -> CanvasNode:
     x, y, w, h = (int(round(v)) for v in box)
     if n.kind is Kind.IMAGE and n.image:
+        if n.image.href is None:  # not downloaded
+            return CanvasNode(id=n.id, type="text", x=x, y=y, width=w, height=h, text="*(image not downloaded)*")
         return CanvasNode(id=n.id, type="file", x=x, y=y, width=w, height=h,
                           file=_join(vault_prefix, n.image.href))
     if n.kind is Kind.LINE:

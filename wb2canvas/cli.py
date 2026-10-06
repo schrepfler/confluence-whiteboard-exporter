@@ -3,8 +3,9 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import click
@@ -145,7 +146,8 @@ def discover(ctx: click.Context, space: str, method: str) -> None:
         sys.exit(2)
 
     out_dir: Path = ctx.obj["out_dir"]
-    boards = list_whiteboards_in_space(base_url, email, token, space, method=method)
+    with _rest_errors(base_url, email, token, f"space {space!r}"):
+        boards = list_whiteboards_in_space(base_url, email, token, space, method=method)
     target = boards_index_path(out_dir, space)
     ensure_dir(target.parent)
     target.write_text(
@@ -239,7 +241,8 @@ def extract(
                 err=True,
             )
             sys.exit(2)
-        boards = [get_whiteboard(base_url, email, token, board_id)]  # type: ignore[arg-type]
+        with _rest_errors(base_url, email, token, f"whiteboard {board_id}"):  # type: ignore[arg-type]
+            boards = [get_whiteboard(base_url, email, token, board_id)]  # type: ignore[arg-type]
 
     todo = [b for b in boards if force or not dump_path(out_dir, b.spaceKey, b.boardId).exists()]
     for b in boards:
@@ -437,6 +440,33 @@ async def _extract_boards(
                 f"elements={len(dump.elements)}, media={len(dump.media)})"
             )
     return failed
+
+
+@contextmanager
+def _rest_errors(base_url: str, email: str, token: str, what: str) -> Iterator[None]:
+    """Turn a failed Confluence REST call into one line saying why."""
+    import httpx
+
+    from .discover import credentials_rejected
+
+    try:
+        yield
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        if credentials_rejected(base_url, email, token):
+            click.echo(
+                f"ERROR: Confluence rejected the API token ({status}); tokens expire. Create one at "
+                "https://id.atlassian.com/manage-profile/security/api-tokens and set CONFLUENCE_API_TOKEN.",
+                err=True,
+            )
+        elif status == 404:
+            click.echo(f"ERROR: {what} not found, or this account cannot see it ({status}).", err=True)
+        else:
+            click.echo(f"ERROR: Confluence answered {status} for {e.request.url.path}.", err=True)
+        sys.exit(1)
+    except httpx.TransportError as e:
+        click.echo(f"ERROR: cannot reach Confluence at {base_url}: {e}", err=True)
+        sys.exit(1)
 
 
 def _vault_dest(vault_dir: Path | None, vault_prefix: str) -> Path | None:

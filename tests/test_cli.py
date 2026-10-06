@@ -163,3 +163,38 @@ def test_expired_session_stops_the_run(tmp_path: Path, fake_extractor) -> None:
     assert fake_extractor.instances[0].extracted == ["1"], "no point retrying with a dead session"
     assert "3 of 3 board(s) failed" in result.output
     assert "auth attach" in result.output
+
+
+BASE = "https://example.atlassian.net"
+
+
+def _discover(tmp_path: Path, space: str = "SP"):
+    return CliRunner().invoke(
+        main, ["--out", str(tmp_path / "out"), "--base-url", BASE, "--email", "me@example.com",
+               "--token", "t", "discover", space],
+    )
+
+
+def test_discover_says_when_the_token_is_rejected(tmp_path: Path) -> None:
+    import httpx
+    import respx
+
+    with respx.mock(base_url=BASE) as mock:
+        # A rejected token is answered as an anonymous visitor: 404, not 403.
+        mock.get("/wiki/api/v2/spaces").mock(return_value=httpx.Response(404))
+        mock.get("/wiki/rest/api/user/current").mock(return_value=httpx.Response(403))
+        result = _discover(tmp_path)
+    assert result.exit_code == 1
+    assert "rejected the API token" in result.output and "Traceback" not in result.output
+
+
+def test_discover_says_when_a_space_is_missing(tmp_path: Path) -> None:
+    import httpx
+    import respx
+
+    with respx.mock(base_url=BASE) as mock:
+        mock.get("/wiki/api/v2/spaces").mock(return_value=httpx.Response(404))
+        mock.get("/wiki/rest/api/user/current").mock(return_value=httpx.Response(200, json={"type": "known"}))
+        result = _discover(tmp_path, "NOPE")
+    assert result.exit_code == 1
+    assert "space 'NOPE' not found" in result.output
