@@ -104,11 +104,46 @@ built from code, with what the editor makes of it kept as the reference.
 
 1. ✅ Spec, payload generator and `wb2canvas reference create`: 208 cells,
    548 elements, pasted and read back intact in about 30 seconds.
-2. Reading the editor's drawn geometry per cell, and the per-cell
-   comparisons. Moved ahead of the golden dump: see below.
-3. Golden dump and geometry; move the existing geometry tests onto them.
+2. ✅ Reading the editor's drawn geometry and comparing it per cell:
+   `wb2canvas reference snapshot` writes `tests/reference/golden/geometry.json`;
+   `tests/test_reference_geometry.py` runs one test per cell, offline.
+   170 cells match; 40 are known gaps, listed below.
+3. Close the gaps, one kind at a time, each flipping its cells to passing.
 4. Reference images, our renders and the report.
 5. `--live` and `--update-goldens`; images and library icons on the board.
+
+### Known gaps (step 3)
+
+Each is listed in `KNOWN_GAPS` in the test, with the cells it covers:
+
+- **Free text** (8 cells): the editor pads free text 8 on each side (one
+  line is 38 high), ours 24; fixed-width text is drawn as flexible.
+- **Drawings with a label below** (actor, start, end and the 21 icon
+  shapes): the editor's box is the drawing at its own aspect ratio plus
+  the label (an actor 200 wide is 400 + 46 high); ours keeps the stored box.
+- **Growth to fit text** (overflow cells, the upside-down triangle, the
+  wide database): our estimate treats every text area as the whole box;
+  the editor grows each shape until its content box holds the text (an
+  overflowing ellipse 180 wide grows to 283, a diamond to 532).
+- **Library icons**: drawn as a square of their basis width.
+- **Right-angled connectors between ends on the same side** route
+  differently.
+
+Measuring paths showed one difference that is not a gap: the editor's
+path runs to the end point under an arrowhead that covers the line, while
+ours stops where it begins; the comparison leaves that stretch out.
+
+### How the geometry is read
+
+`wb2canvas/geometry_probe.js`, read-only. The editor runs an
+entity-component system (Becsy); the probe finds its World class among
+the page's modules and captures the running world on its next frame.
+Drawn boxes come from the positioning engine, by element id; connector
+paths are components, readable only while a system executes, so they are
+read during one frame of the system that draws paths. Board elements are
+matched back to the spec by their stored centres (the paste moves them
+all by one offset) and connectors and labels by what they attach to, so
+the references are keyed by cell and survive a rebuild.
 
 ### Learnt from step 1
 

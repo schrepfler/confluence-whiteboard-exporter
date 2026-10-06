@@ -102,3 +102,35 @@ async def _until(check, timeout_s: float, message: str) -> None:  # noqa: ANN001
         if asyncio.get_running_loop().time() > deadline:
             raise TimeoutError(message)
         await asyncio.sleep(0.25)
+
+
+GEOMETRY_PROBE = (Path(__file__).with_name("geometry_probe.js")).read_text()
+
+
+async def read_stored(frame: Frame) -> tuple[dict, dict[str, tuple[float, float]]]:
+    """The board's stored elements by id, with each label's proportion
+    (`pp`) and side (`pop`) folded in, and each element's stored centre."""
+    dump = await frame.evaluate("globalThis.__wb2canvas.dumpYDoc()")
+    board = dump["board"]
+    centres: dict[str, tuple[float, float]] = {}
+    for entry in dump["dimensions"]:
+        kind, eid = entry["key"].split("#", 1)
+        if kind == "p":
+            centres[eid] = (entry["val"][0], entry["val"][1])
+        elif kind in ("pp", "pop") and eid in board:
+            board[eid][kind] = entry["val"]
+    return board, centres
+
+
+async def read_geometry(frame: Frame) -> dict:
+    """What the editor drew: `boxes` and `paths` by element id."""
+    await frame.evaluate(GEOMETRY_PROBE)
+    return await frame.evaluate("globalThis.__wb2canvasGeometry.readAll()")
+
+
+async def editor_bundle(frame: Frame) -> str:
+    """The editor's main bundle, which changes with every deploy."""
+    return await frame.evaluate(
+        "[...document.querySelectorAll('link[rel=modulepreload][href], script[type=module][src]')]"
+        ".map((e) => (e.href || e.src).split('/').pop()).find((n) => /^a1b2c3-/.test(n)) || 'unknown'"
+    )

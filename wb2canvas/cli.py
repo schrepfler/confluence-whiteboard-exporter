@@ -184,6 +184,55 @@ def reference_create(ctx: click.Context, space: str, board_id: str | None, heade
     click.echo(f"reference board {board_id}: {len(cells)} cells, {len(elements)} elements")
 
 
+GOLDEN_DIR = Path("tests/reference/golden")
+
+
+@reference.command("snapshot")
+@click.option("--out", "golden_dir", type=click.Path(file_okay=False, path_type=Path), default=GOLDEN_DIR,
+              show_default=True, help="Where to write the references.")
+@click.pass_context
+def reference_snapshot(ctx: click.Context, golden_dir: Path) -> None:
+    """Read what the editor drew on the reference board and save it as the
+    references the tests compare against."""
+    import asyncio as _asyncio
+    import json as _json
+
+    from .reference import match_board, payload, spec, spec_hash
+    from .storage import atomic_write_text, reference_state_path, storage_state_path
+
+    base_url = ctx.obj["base_url"]
+    state_path = reference_state_path()
+    if not base_url or not state_path.exists():
+        click.echo("ERROR: no reference board yet; run `wb2canvas reference create --space KEY` first.", err=True)
+        sys.exit(2)
+    state = _json.loads(state_path.read_text())
+    cells = spec()
+    if state.get("spec_hash") != spec_hash(payload(cells)):
+        click.echo("ERROR: the spec changed since the board was built; run `wb2canvas reference create` again.",
+                   err=True)
+        sys.exit(2)
+
+    board, centres, geometry, bundle = _asyncio.run(
+        _read_reference(base_url, state["space"], state["board_id"], storage_state_path()))
+    golden = match_board(cells, board, centres, geometry)
+    golden["editor_bundle"] = bundle
+    missing = [f"{name}#{e['place']}" for name, entries in golden["cells"].items() for e in entries if e.get("missing")]
+    target = golden_dir / "geometry.json"
+    atomic_write_text(target, _json.dumps(golden, indent=1) + "\n")
+    click.echo(f"wrote {target}: {len(golden['cells'])} cells, editor {bundle}")
+    if missing:
+        click.echo(f"  {len(missing)} element(s) not found on the board: {', '.join(missing[:10])}", err=True)
+
+
+async def _read_reference(base_url: str, space: str, board_id: str, session: Path) -> tuple:
+    from .editor import browser_context, editor_bundle, open_board, read_geometry, read_stored
+
+    async with browser_context(session) as browser:
+        _, frame = await open_board(browser, base_url, space, board_id)
+        board, centres = await read_stored(frame)
+        return board, centres, await read_geometry(frame), await editor_bundle(frame)
+
+
 async def _build_reference(base_url: str, space: str, board_id: str, html: str, expected: int,
                            session: Path, *, headless: bool) -> None:
     from .editor import browser_context, clear_board, element_count, open_board, paste

@@ -291,6 +291,118 @@ def _placed(e: Json, dx: float, dy: float, base: int) -> Json:
     return e
 
 
+def placements(cells: list[Cell]) -> list[tuple[str, int | str]]:
+    """For each payload element, its cell and its place in it: the index in
+    the cell's elements, or "caption"."""
+    out: list[tuple[str, int | str]] = []
+    for cell in cells:
+        out += [(cell.name, i) for i in range(len(cell.elements))] + [(cell.name, "caption")]
+    return out
+
+
+# ------------------------------------------------------------- the reference
+# What the editor drew for each element, keyed by cell and place, in the
+# payload's coordinates (the board's, less the offset the paste moved
+# everything by), so rebuilding the board does not change it.
+
+
+def match_board(cells: list[Cell], board: dict[str, Json], centres: dict[str, tuple[float, float]],
+                geometry: Json) -> Json:
+    """The editor's drawn geometry per cell.
+
+    `board` is the board's stored elements by id (the Yjs form: `t` type,
+    `se`/`te` connector ends, `pi` a label's connector, `pp` its proportion,
+    `pop` its side), `centres` their stored centres, `geometry` what
+    geometry_probe.js read: drawn `boxes` and `paths` by id.
+    """
+    elements = payload(cells)
+    where = placements(cells)
+    offset = _paste_offset(elements, board, centres)
+    found: dict[int, str] = {}
+    by_type: dict[str, list[str]] = {}
+    for eid, el in board.items():
+        by_type.setdefault(el.get("t"), []).append(eid)
+
+    def near(eid: str, x: float, y: float) -> bool:
+        cx, cy = centres.get(eid, (math.inf, math.inf))
+        return abs(cx - x - offset[0]) < 0.05 and abs(cy - y - offset[1]) < 0.05
+
+    for i, e in enumerate(elements):
+        if e["type"] in ("shape", "text", "advanced-icon"):
+            hits = [eid for eid in by_type.get(e["type"], []) if near(eid, e["position"]["x"], e["position"]["y"])]
+            if len(hits) == 1:
+                found[i] = hits[0]
+    for i, e in enumerate(elements):
+        if e["type"] == "connector":
+            ends = (found.get(e["sourceIndex"]), found.get(e["targetIndex"]))
+            hits = [eid for eid in by_type.get("connector", [])
+                    if (board[eid].get("se"), board[eid].get("te")) == ends]
+            if len(hits) == 1:
+                found[i] = hits[0]
+    for i, e in enumerate(elements):
+        if e["type"] == "pathLabel" and (path := found.get(e["sourcePathIndex"])):
+            hits = [eid for eid in by_type.get("pathLabel", []) if board[eid].get("pi") == path
+                    and abs(board[eid].get("pp", -1) - e["proportion"]) < 1e-6
+                    and board[eid].get("pop", 0) == e["pathOffsetPosition"]]
+            if len(hits) == 1:
+                found[i] = hits[0]
+        elif e["type"] == "path":
+            hits = [eid for eid, p in geometry["paths"].items() if board.get(eid, {}).get("t") == "path"
+                    and abs(p["start"][0] - e["start"][0] - offset[0]) < 0.5
+                    and abs(p["start"][1] - e["start"][1] - offset[1]) < 0.5]
+            if len(hits) == 1:
+                found[i] = hits[0]
+
+    ox, oy = offset
+    cells_out: dict[str, list[Json]] = {cell.name: [] for cell in cells}
+    for i, e in enumerate(elements):
+        if e["type"] == "pathWaypoint":
+            continue  # drawn as part of its connector
+        name, place = where[i]
+        entry: Json = {"place": place, "type": e["type"]}
+        eid = found.get(i)
+        if eid is None:
+            entry["missing"] = True
+        else:
+            if (box := geometry["boxes"].get(eid)) is not None:
+                entry["box"] = [round(box[0] - ox, 2), round(box[1] - oy, 2), round(box[2] - ox, 2), round(box[3] - oy, 2)]
+            if (path := geometry["paths"].get(eid)) is not None:
+                entry["path"] = {"start": [round(path["start"][0] - ox, 2), round(path["start"][1] - oy, 2)],
+                                 "end": [round(path["end"][0] - ox, 2), round(path["end"][1] - oy, 2)],
+                                 "segments": _rounded(path["segments"])}
+        cells_out[name].append(entry)
+    return {"spec_hash": spec_hash(elements), "cells": cells_out}
+
+
+def _paste_offset(elements: list[Json], board: dict[str, Json],
+                  centres: dict[str, tuple[float, float]]) -> tuple[float, float]:
+    """How far the paste moved everything: the most common difference
+    between where a text element was put and where the board has it."""
+    from collections import Counter
+
+    texts = [e for e in elements if e["type"] == "text"]
+    stored = [centres[eid] for eid, el in board.items() if el.get("t") == "text" and eid in centres]
+    votes: Counter[tuple[float, float]] = Counter()
+    first = texts[0]["position"]
+    for x, y in stored:
+        votes[(round(x - first["x"], 1), round(y - first["y"], 1))] += 1
+    # Every text element of the spec agrees on the true offset.
+    best = max(votes, key=lambda o: sum(any(abs(x - e["position"]["x"] - o[0]) < 0.05 and
+                                            abs(y - e["position"]["y"] - o[1]) < 0.05 for x, y in stored)
+                                        for e in texts[:20]))
+    return best
+
+
+def _rounded(value: Any) -> Any:
+    if isinstance(value, float):
+        return round(value, 3)
+    if isinstance(value, list):
+        return [_rounded(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _rounded(v) for k, v in value.items()}
+    return value
+
+
 def clipboard_html(elements: list[Json]) -> str:
     """What the editor writes to, and reads from, the clipboard."""
     data = base64.b64encode(json.dumps(elements).encode("utf-8")).decode("ascii")
