@@ -88,9 +88,10 @@ def test_a_section_painted_with_the_stroke_colour_ignores_the_fill() -> None:
 
 
 def test_text_goes_in_the_drawings_text_area() -> None:
-    # A database's text sits below its lid, 52 units from the top.
-    group = _shape_group(_svg_for([{"type": "shape", "shape": 13, "position": {"x": 50, "y": 50},
-                                    "size": {"x": 100, "y": 100}, "text": _adf("x")}]))
+    # A database's text sits below its lid, 52 units from the top. (One
+    # 100 high would first be raised to the 108.65 a line of text needs.)
+    group = _shape_group(_svg_for([{"type": "shape", "shape": 13, "position": {"x": 50, "y": 80},
+                                    "size": {"x": 100, "y": 160}, "text": _adf("x")}]))
     fo = re.search(r'<foreignObject x="([^"]+)" y="([^"]+)"', group)
     assert float(fo.group(2)) == pytest.approx(52)
 

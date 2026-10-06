@@ -17,7 +17,7 @@ import math
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 Box = tuple[float, float, float, float]
 Cmd = list[Any]  # ["M", p] | ["L", p] | ["C", p, p, p] | ["Z"], p = [fx, fy, ox, oy]
@@ -204,6 +204,58 @@ def _content_box(key: str, x: float, y: float, w: float, h: float) -> Box | None
         return None
     cw, ch = max(cw, 0.0), max(ch, 0.0)
     return (x + (w - cw) / 2, y + (h - ch) / 2 + shift, cw, ch)
+
+
+class TextArea(NamedTuple):
+    """Where a shape `w` wide holds its text, for a box of height H: the
+    content box runs from `top_share * H + top_offset` to `bottom_share * H
+    + bottom_offset` below the box's top edge, and is `width` wide."""
+
+    width: float
+    top_share: float
+    top_offset: float
+    bottom_share: float
+    bottom_offset: float
+    label_below: bool = False  # a drawing with its label underneath
+
+    def content(self, h: float) -> float:
+        return (self.bottom_share - self.top_share) * h + self.bottom_offset - self.top_offset
+
+    def box(self, content: float) -> float:
+        """The box height whose content box is `content` high."""
+        return (content - self.bottom_offset + self.top_offset) / (self.bottom_share - self.top_share)
+
+    def centre_offset(self, h: float) -> float:
+        """How far the content box's centre sits below the box's."""
+        return ((self.top_share + self.bottom_share) * h + self.top_offset + self.bottom_offset) / 2 - h / 2
+
+
+def text_area(kind: int | None, w: float, shape_map: dict[int, int] | None = None) -> TextArea | None:
+    """Where a shape `w` wide holds its text; None for a kind without text.
+
+    The editor's content boxes: the box less the corner for rounded
+    polygons, a fixed share for the other basic shapes, the drawing's text
+    area for drawn shapes, and for drawings with a label below, the space
+    under the drawing, which keeps its own aspect ratio.
+    """
+    k = resolve(kind, shape_map)
+    spec = _kinds().get(k)
+    if spec is None or spec.get("no_text"):
+        return None
+    key = spec["key"]
+    if (aspect := spec.get("aspect")) and spec.get("exterior_text") == "+y":
+        return TextArea(w, 0.0, w / aspect, 1.0, 0.0, label_below=True)
+    if key in _ROUNDEDNESS:
+        corner = CORNER_PER_ROUNDEDNESS * _ROUNDEDNESS[key]
+        return TextArea(w - corner, 0.0, corner / 2, 1.0, -corner / 2)
+    if key in _CONTENT_SHARE:
+        sw, sh, down = _CONTENT_SHARE[key]
+        return TextArea(w * sw, 0.5 + down - sh / 2, 0.0, 0.5 + down + sh / 2, 0.0)
+    if spec.get("text") and not spec.get("aspect"):
+        (fx0, fy0, ox0, oy0), (fx1, fy1, ox1, oy1) = spec["text"]
+        if fy1 - fy0 > 0:
+            return TextArea((fx1 - fx0) * w + (ox1 - ox0), fy0, oy0, fy1, oy1)
+    return TextArea(w, 0.0, 0.0, 1.0, 0.0)
 
 
 def sections(kind: int, x: float, y: float, w: float, h: float) -> tuple[Section, ...]:

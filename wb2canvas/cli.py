@@ -224,6 +224,69 @@ def reference_snapshot(ctx: click.Context, golden_dir: Path) -> None:
         click.echo(f"  {len(missing)} element(s) not found on the board: {', '.join(missing[:10])}", err=True)
 
 
+METRIC_CHARS = [chr(c) for c in range(33, 127)] + list("\u2019\u2018\u201c\u201d\u2013\u2014\u2022\u2026\u00e9\u00e8\u00e0\u00fc\u00f6\u00e4")
+
+
+@reference.command("metrics")
+@click.option("--out", "target", type=click.Path(dir_okay=False, path_type=Path),
+              default=Path(__file__).with_name("text_metrics.json"), show_default=True)
+@click.pass_context
+def reference_metrics(ctx: click.Context, target: Path) -> None:
+    """Measure the editor's text with its own text engine, on the reference
+    board: each character's width in each style, and how whole strings
+    compare with their characters' widths."""
+    import asyncio as _asyncio
+    import json as _json
+    import statistics
+
+    from .reference import doc, heading, para, spec
+    from .storage import atomic_write_text, reference_state_path, storage_state_path
+
+    state_path = reference_state_path()
+    if not ctx.obj["base_url"] or not state_path.exists():
+        click.echo("ERROR: no reference board yet; run `wb2canvas reference create --space KEY` first.", err=True)
+        sys.exit(2)
+    state = _json.loads(state_path.read_text())
+    styles = {"400": lambda t: doc(para(t)), "600": lambda t: doc(para(t, bold=True)),
+              **{f"h{n}": (lambda t, n=n: doc(heading(t, n))) for n in range(1, 7)}}
+    repeat = 10
+    items, keys = [], []
+    for style, make in styles.items():
+        for ch in METRIC_CHARS:
+            items.append({"adf": make(ch * repeat), "width": 10_000})
+            keys.append((style, ch))
+        for probe in ("aa", "a a"):  # a space is the difference
+            items.append({"adf": make(probe), "width": 10_000})
+            keys.append((style, probe))
+    captions = [c.name for c in spec()]
+    items += [{"adf": doc(para(name)), "width": 10_000} for name in captions]
+
+    results = _asyncio.run(_measure(ctx.obj["base_url"], state["space"], state["board_id"], items,
+                                    storage_state_path()))
+    table: dict[str, dict[str, float]] = {style: {} for style in styles}
+    for (style, key), r in zip(keys, results, strict=False):
+        table[style][key] = r["contentWidth"]
+    for widths in table.values():
+        widths[" "] = widths.pop("a a") - widths.pop("aa")
+        for ch in METRIC_CHARS:
+            widths[ch] = round(widths[ch] / repeat, 4)
+        widths[" "] = round(widths[" "], 4)
+    summed = [sum(table["400"].get(ch, 0.0) for ch in name) for name in captions]
+    fit = statistics.median(r["contentWidth"] / w for r, w in zip(results[len(keys):], summed, strict=True))
+    atomic_write_text(target, _json.dumps({
+        "source": "the whiteboard editor's text engine, by `wb2canvas reference metrics`; widths only",
+        "fit": round(fit, 5), "styles": table}, ensure_ascii=False, separators=(",", ":")) + "\n")
+    click.echo(f"wrote {target}: {len(METRIC_CHARS) + 1} characters in {len(styles)} styles, fit {fit:.4f}")
+
+
+async def _measure(base_url: str, space: str, board_id: str, items: list[dict], session: Path) -> list[dict]:
+    from .editor import browser_context, measure_text, open_board
+
+    async with browser_context(session) as browser:
+        _, frame = await open_board(browser, base_url, space, board_id)
+        return await measure_text(frame, items)
+
+
 async def _read_reference(base_url: str, space: str, board_id: str, session: Path) -> tuple:
     from .editor import browser_context, editor_bundle, open_board, read_geometry, read_stored
 

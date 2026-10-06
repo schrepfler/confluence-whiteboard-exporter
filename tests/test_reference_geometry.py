@@ -29,15 +29,6 @@ BOX_TOLERANCE = 1.5  # board units
 PATH_TOLERANCE = 2.0
 
 KNOWN_GAPS = {
-    "shape/60 actor": "drawings with a label below are drawn at their own aspect ratio plus the label",
-    "shape/64 end": "drawings with a label below are drawn at their own aspect ratio plus the label",
-    "shape/80 start": "drawings with a label below are drawn at their own aspect ratio plus the label",
-    "shape/3[2-9] *": "icon shapes are drawn at their own aspect ratio plus the label below",
-    "shape/4[0-9] *": "icon shapes are drawn at their own aspect ratio plus the label below",
-    "shape/5[0-2] *": "icon shapes are drawn at their own aspect ratio plus the label below",
-    "shape/6 upside-down-triangle": "growth to fit text uses a rectangular text area, not the shape's content box",
-    "shape/13 wide": "growth to fit text uses a rectangular text area, not the shape's content box",
-    "text/overflow *": "growth to fit text uses a rectangular text area, not the shape's content box",
     "icon/aws": "a library icon is drawn as a square of its basis width",
     "connector/dynamic sides (1, 0.5)->(1, 0.5)": "a right-angled route between ends on the same side "
                                                   "differs from the editor's",

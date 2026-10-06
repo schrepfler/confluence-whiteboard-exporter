@@ -77,12 +77,29 @@ with no text, which the editor never measures (`isContentEmpty`). Left-aligned f
 rightward from its left edge, so a column of labels shares
 `basisPosition.x − basisSize.x / 2`.
 
+Where no growth is stored (pasted elements, boards made by tools), the
+editor's own rule applies (`sizeContentInternal`): a shape with text is
+first raised to the size one line needs, about its centre; then its content
+box grows downward until the text fits, and the box is rebuilt round it.
+So an overflowing ellipse grows partly upward (its content box is `1/√2` of
+the box), and a database too short for one line grows both ways.
+
 ### How text is laid out
 
 - **Type.** Paragraphs are `11.6 / 0.75` ≈ 15.47 px on a 22 px line
   (`defaultTextSpacing`), in "Atlassian Sans"; headings h1–h6 are 27/32,
   23/27, 18/23, 16/23, 14/18 and 13/18 px. There is no space between
-  paragraphs or round lists: a box is whole 22 px lines plus padding.
+  paragraphs or round lists: a box is whole 22 px lines plus padding. A
+  list item is indented 0.76 em. A font scale scales text set at the base
+  size, not the font size (the font is narrower at larger sizes).
+- **Widths and line breaks.** Text is set by the editor's own text engine
+  (`CanvasContentLayoutManager`), not the browser. `wb2canvas/text_metrics.json`
+  holds each character's width as that engine sets it, per style, measured
+  by `wb2canvas reference metrics`. A line holds a word only if the space
+  after it fits too; a line may break after a hyphen; a word wider than the
+  line breaks anywhere.
+- **Free text** is padded 8 on each side, not scaled with the font;
+  flexible text widens away from its aligned edge, fixed-width text wraps.
 - **Content box.** A shape's text goes in a content box
   (`getConverterForShape`), then 12 units of padding on every side, scaled
   by the font scale. The rectangle and rounded rectangle lose their corner

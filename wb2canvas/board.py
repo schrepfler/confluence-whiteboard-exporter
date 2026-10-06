@@ -29,6 +29,7 @@ from typing import Any
 from .adf import adf_to_html, adf_to_markdown
 from .model import Anchor, BoardMeta, ClipboardElement, DumpFile, FiberDump, Vector2, Vector3
 from .palette import drawn
+from .shapes import TextArea, text_area
 
 log = logging.getLogger(__name__)
 
@@ -585,19 +586,16 @@ EDITOR_FONT_PX = 11.6 / 0.75
 EDITOR_LINE_PX = 22.0
 EDITOR_HEADINGS = {1: (27, 32), 2: (23, 27), 3: (18, 23), 4: (16, 23), 5: (14, 18), 6: (13, 18)}
 LIST_INDENT_EM = 0.76
-# The editor lays text out at this share of its characters' summed widths
-# as a canvas measures them (text_metrics.json); the rest is kerning.
-WIDTH_FIT = 0.9845
 
 
 @dataclass(frozen=True)
 class TextMetrics:
     """Rough text layout model for one renderer; used only to size boxes.
 
-    With `font_px` set, widths come from the editor's own font, measured
-    per character at the sizes it uses; otherwise every character is
-    `char_w` wide. A font scale scales the text after it is set (the editor
-    lays scaled text out at its own size, then scales it), not the font size.
+    With `font_px` set, widths are the editor's: each character's width as
+    its text engine sets it (text_metrics.json); otherwise every character
+    is `char_w` wide. A font scale scales the text after it is set (the
+    editor lays scaled text out at its own size, then scales it).
     """
 
     char_w: float  # average glyph advance, px
@@ -617,8 +615,8 @@ class TextMetrics:
     def width(self, text: str, bold: bool = False, heading: int = 0) -> float:
         if self.font_px is None:
             return len(text) * self.char_w
-        px = EDITOR_HEADINGS[heading][0] if heading else self.font_px
-        return text_width(text, px, bold or bool(heading)) * self.scale
+        style = f"h{heading}" if heading else "600" if bold else "400"
+        return text_width(text, style) * self.font_px / EDITOR_FONT_PX * self.scale
 
     def line_height(self, heading: int = 0) -> float:
         if heading and self.font_px is not None:
@@ -630,33 +628,19 @@ class TextMetrics:
         return LIST_INDENT_EM * self.font_px * self.scale if self.font_px else 3 * self.char_w
 
 
-def text_width(text: str, px: float, bold: bool = False) -> float:
-    """How wide the editor sets `text` at `px`: per-character widths of its
-    font, interpolated between the sizes they were measured at (the font
-    changes its proportions with size)."""
-    sizes = _width_table()["600" if bold else "400"]
-    ordered = sorted(sizes)
-    lo = max((z for z in ordered if z <= px), default=ordered[0])
-    hi = min((z for z in ordered if z >= px), default=ordered[-1])
-
-    def per_px(size: float) -> float:
-        table, fallback = sizes[size]
-        return sum(table.get(ch, fallback) for ch in text) / size
-
-    share = per_px(lo) if hi == lo else per_px(lo) + (per_px(hi) - per_px(lo)) * (px - lo) / (hi - lo)
-    return share * px * WIDTH_FIT
+def text_width(text: str, style: str = "400") -> float:
+    """How wide the editor sets `text` in a style ("400" paragraph, "600"
+    bold, "h1".."h6" headings), at the style's own size: the sum of each
+    character's width as the editor's text engine sets it, less kerning."""
+    widths, fallback, fit = _width_table()[style]
+    return sum(widths.get(ch, fallback) for ch in text) * fit
 
 
 @cache
-def _width_table() -> dict[str, dict[float, tuple[dict[str, float], float]]]:
+def _width_table() -> dict[str, tuple[dict[str, float], float, float]]:
     data = json.loads(Path(__file__).with_name("text_metrics.json").read_text())
-    out: dict[str, dict[float, tuple[dict[str, float], float]]] = {}
-    for weight, sizes in data["weights"].items():
-        out[weight] = {}
-        for size, widths in sizes.items():
-            fallback = sum(widths[c] for c in "abcdefghijklmnopqrstuvwxyz") / 26  # an unmeasured character
-            out[weight][float(size)] = (widths, fallback)
-    return out
+    return {style: (widths, sum(widths[c] for c in "abcdefghijklmnopqrstuvwxyz") / 26, data["fit"])
+            for style, widths in data["styles"].items()}
 
 
 # Obsidian canvas cards render ~16px text with generous card padding.
@@ -685,9 +669,34 @@ def node_box(node: Node, metrics: TextMetrics) -> Box:
         # Text widens away from its aligned edge, as in the editor.
         shift = {"left": 0.0, "center": 0.5, "right": 1.0}.get(node.align, 0.0) * (w - node.w)
         return node.x - shift, node.y, w, h
-    if node.kind is Kind.SHAPE and md and node.w > 0:
-        return node.x, node.y, node.w, max(node.h, _wrapped_height(md, node.w, m))
+    if node.kind is Kind.SHAPE and node.w > 0 and (area := text_area(node.shape_kind, node.w)):
+        top, height = _grown_shape(node, area, metrics, m, md)
+        return node.x, top, node.w, height
     return node.x, node.y, node.w, node.h
+
+
+def _grown_shape(node: Node, area: TextArea, metrics: TextMetrics, m: TextMetrics, md: str) -> tuple[float, float]:
+    """A shape's top and height as the editor sizes it (its sizing strategy):
+    first raised to the size one line of text needs, about its centre;
+    then its content box (the text, padded 12 and scaled with the font)
+    grows downward from there, and the box is rebuilt round it."""
+    pad = metrics.pad_w * node.font_scale
+    y, h = node.y, node.h
+    if md:
+        measured = _wrapped_height(md, area.width, m, pad, pad)
+    elif area.label_below:
+        measured = pad / 2  # an empty label still keeps its top padding
+    else:
+        return y, h  # the editor never measures an empty shape
+    if md and not area.label_below:  # drawings with a label below keep their own minimum
+        least = area.box(m.line_height() + pad)
+        if h < least:
+            y, h = y - (least - h) / 2, least
+    before = area.content(h)
+    after = max(before, measured)
+    centre = y + h / 2 + area.centre_offset(h) + (after - before) / 2
+    grown = area.box(after)
+    return centre - area.centre_offset(grown) - grown / 2, grown
 
 
 def layout(board: Board, metrics: TextMetrics) -> dict[str, Box]:
@@ -760,20 +769,37 @@ def _wrapped_height(markdown: str, width: float, m: TextMetrics, pad_w: float | 
 
 
 def _wrapped_lines(text: str, available: float, m: TextMetrics, bold: bool, heading: int) -> int:
+    """How many lines `text` takes in `available` width, broken as the
+    editor's text engine breaks it: a line holds a word only if the space
+    after it fits too, a line may also break after a hyphen, and a word
+    wider than the line breaks anywhere."""
     available = max(available, 1.0)
     space = m.width(" ", bold, heading)
+    words = text.split()
     lines, current = 1, 0.0
-    for word in text.split():
-        w = m.width(word, bold, heading)
-        if current and current + space + w <= available:
-            current += space + w
-            continue
-        if current:
-            lines += 1
-        extra = max(0, math.ceil(w / available) - 1)
-        lines += extra
-        current = w - extra * available
+    for i, word in enumerate(words):
+        parts = _HYPHENATED.findall(word)
+        for n, part in enumerate(parts):
+            before = 0.0 if n else space
+            after = space if n == len(parts) - 1 and i < len(words) - 1 else 0.0
+            lines, current = _place(part, before, after, available, m, bold, heading, lines, current)
     return lines
+
+
+_HYPHENATED = re.compile(r"[^-]*-+|[^-]+")
+
+
+def _place(word: str, before: float, after: float, available: float, m: TextMetrics, bold: bool,
+           heading: int, lines: int, current: float) -> tuple[int, float]:
+    """Set `word` (with the space `before` it, needing room for the space
+    `after` it) on the last of `lines`, or start a new line."""
+    w = m.width(word, bold, heading)
+    if current and current + before + w + after <= available:
+        return lines, current + before + w
+    if current:
+        lines += 1
+    extra = max(0, math.ceil(w / available) - 1)
+    return lines + extra, w - extra * available
 
 
 # ----------------------------------------------------------------- helpers

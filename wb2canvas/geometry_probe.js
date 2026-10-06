@@ -114,5 +114,29 @@
     return { types, boxes, paths };
   }
 
-  globalThis.__wb2canvasGeometry = { readAll };
+  // Lay text out with the editor's own text engine, the one that sizes and
+  // draws text on the canvas: [{adf, width, fontScale}] -> [{lineCount,
+  // height, contentWidth}] (contentWidth: the widest line). Read-only; the
+  // results are cached under ids of our own.
+  async function measure(items) {
+    const world = await captureWorld();
+    let engine = null;
+    for (const s of world.__dispatcher.systems) {
+      const sys = s.system || s;
+      if (sys.layoutEngine && typeof sys.layoutEngine.requestLayout === 'function') { engine = sys.layoutEngine; break; }
+    }
+    if (!engine) throw new Error("the editor's text layout engine was not found");
+    const out = [];
+    for (const [i, item] of items.entries()) {
+      const layout = await engine.requestLayout({
+        contentId: `wb2canvas-measure-${i}-${Date.now()}`, adfContent: item.adf, width: item.width,
+        alignment: 'left', fontScale: item.fontScale ?? 1,
+      });
+      const m = layout.metrics;
+      out.push({ lineCount: m.lineCount, height: m.height, contentWidth: m.contentWidth });
+    }
+    return out;
+  }
+
+  globalThis.__wb2canvasGeometry = { readAll, measure };
 })();

@@ -107,24 +107,24 @@ built from code, with what the editor makes of it kept as the reference.
 2. ✅ Reading the editor's drawn geometry and comparing it per cell:
    `wb2canvas reference snapshot` writes `tests/reference/golden/geometry.json`;
    `tests/test_reference_geometry.py` runs one test per cell, offline.
-   170 cells match; 40 are known gaps, listed below.
+   170 cells matched at first; 40 were known gaps, listed below.
 3. Close the gaps, one kind at a time, each flipping its cells to passing.
 4. Reference images, our renders and the report.
 5. `--live` and `--update-goldens`; images and library icons on the board.
 
 ### Known gaps (step 3)
 
-Each is listed in `KNOWN_GAPS` in the test, with the cells it covers:
+Closed so far, each found by the reference board and checked against it:
 
-- **Free text** (8 cells): the editor pads free text 8 on each side (one
-  line is 38 high), ours 24; fixed-width text is drawn as flexible.
-- **Drawings with a label below** (actor, start, end and the 21 icon
-  shapes): the editor's box is the drawing at its own aspect ratio plus
-  the label (an actor 200 wide is 400 + 46 high); ours keeps the stored box.
-- **Growth to fit text** (overflow cells, the upside-down triangle, the
-  wide database): our estimate treats every text area as the whole box;
-  the editor grows each shape until its content box holds the text (an
-  overflowing ellipse 180 wide grows to 283, a diamond to 532).
+- ✅ **Free text** padding (8, not 24) and fixed width.
+- ✅ **Text widths and line breaks**, from the editor's own text engine.
+- ✅ **Drawings with a label below**: the drawing at its own aspect ratio
+  plus the label.
+- ✅ **Growth to fit text**, through each shape's content box, after the
+  editor's one-line minimum.
+
+Remaining, listed in `KNOWN_GAPS` in the test:
+
 - **Library icons**: drawn as a square of their basis width.
 - **Right-angled connectors between ends on the same side** route
   differently.

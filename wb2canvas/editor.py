@@ -134,3 +134,10 @@ async def editor_bundle(frame: Frame) -> str:
         "[...document.querySelectorAll('link[rel=modulepreload][href], script[type=module][src]')]"
         ".map((e) => (e.href || e.src).split('/').pop()).find((n) => /^a1b2c3-/.test(n)) || 'unknown'"
     )
+
+
+async def measure_text(frame: Frame, items: list[dict]) -> list[dict]:
+    """Lay text out with the editor's own text engine: each item is
+    {adf, width, fontScale}; each result {lineCount, height, contentWidth}."""
+    await frame.evaluate(GEOMETRY_PROBE)
+    return await frame.evaluate("(items) => globalThis.__wb2canvasGeometry.measure(items)", items)
