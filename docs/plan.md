@@ -35,7 +35,89 @@ Checked board by board, side by side with the live editor:
   a sample board containing it.
 - **Dark theme**: colours are resolved against the light theme only.
 
-## Next
+## Next: a reference board
+
+The rules above were worked out by comparing exports with real boards by
+eye. To keep checking them, and to catch the editor changing, the tests
+need a board of their own: every element we draw, in every variation,
+built from code, with what the editor makes of it kept as the reference.
+
+### Principles
+
+- **The board is generated, not drawn.** A spec in the repo describes it,
+  so its content is synthetic and anyone can recreate it in their own
+  Confluence. Nothing identifying a site, space or person is committed.
+- **Confluence is needed to refresh the references, not to run the
+  tests.** The references are committed; the default test run is offline.
+  A live run checks a tester's own board against them and can update them.
+- **Numbers decide, pictures explain.** Pass or fail comes from geometry
+  read from the editor (boxes, paths, label positions), within stated
+  tolerances. Pixel comparisons go into a report for people to look at.
+
+### Pieces
+
+1. **Spec** (`tests/reference/spec.py`): a grid of labelled cells, each
+   holding one variation with a caption naming it:
+   - every shape kind, at two sizes; fill on and off; each stroke style
+     and size; a sample of palette colours;
+   - text: alignment, vertical alignment, font scale, headings, lists,
+     bold, text that overflows its box, an empty shape;
+   - free text: each alignment, fixed and flexible width;
+   - connectors: straight, curved and right-angled, every line end, each
+     thickness and stroke style, with and without waypoints, handle axes
+     on right-angled ones, labels centred and to either side at several
+     proportions, ends attached and loose;
+   - an image used twice, a library icon, a freehand line;
+   - one of each unsupported element type, to check the warnings.
+2. **Payload generator**: turns the spec into the clipboard payload the
+   editor reads when pasting, the same format the extractor already
+   reads from a copy.
+3. **`wb2canvas reference create --space KEY`**: creates an empty
+   whiteboard through the REST API and pastes the payload into it in the
+   logged-in browser. The editor measures the text and grows the boxes
+   itself, which is exactly what the references should capture. The
+   board's id, site and the spec's hash are kept in a git-ignored local
+   file, so a changed spec shows the board is out of date. It only ever
+   writes to the board it created.
+4. **References** (`tests/reference/golden/`, committed):
+   - the board extracted again after the paste: what the editor stored;
+   - the editor's drawn geometry per cell, read from its runtime state:
+     each element's box, each connector's path, each label's position;
+   - one image per cell from the live canvas, at a fixed zoom, with
+     images and fonts loaded and the editor's interface hidden;
+   - the editor version they came from.
+5. **Offline tests** (default `pytest`): export the golden dump and compare
+   our geometry with the editor's per cell; render each cell and compare
+   it with its reference image.
+6. **Live tests** (`pytest --live`, needs the tester's Confluence through
+   the same settings and browser login as an export): read the tester's
+   reference board again and report any drift from the references, which
+   means the editor changed; `--update-goldens` rewrites the references.
+7. **Report** (`out/report/index.html`, not committed): one row per cell
+   with the live image, our render, a diff overlay, the measured
+   differences and pass, warn or fail; images embedded, so the page is
+   self-contained. Our renders use Atlassian Sans fetched from the live
+   page during a live run, so text compares like for like; the font is
+   never committed.
+
+### Order of work
+
+1. Spec, payload generator and pasting into a new board. The riskiest
+   step: does a pasted payload keep everything the tests need?
+2. Golden dump; move the existing geometry tests onto it.
+3. Reading the editor's drawn geometry, and the per-cell comparisons.
+4. Reference images, our renders and the report.
+5. `--live` and `--update-goldens`; images and library icons on the board.
+
+### Open questions
+
+- Images need a real upload rather than a paste; how best to add them.
+- How large one board can grow before the editor slows down; the spec may
+  need splitting into several boards (shapes, text, connectors).
+- Whether a paste keeps positions exactly or shifts them to where the view
+  is; captions make cells findable either way.
+
+## Later
 
 - Export a space straight into an Obsidian vault (`--vault`, `--vault-prefix`)
   and check the canvases there.
