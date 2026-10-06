@@ -27,6 +27,7 @@ from typing import Any
 
 from .adf import adf_to_html, adf_to_markdown
 from .model import Anchor, BoardMeta, ClipboardElement, DumpFile, FiberDump, Vector2, Vector3
+from .palette import drawn
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +69,16 @@ class Rgb:
 
     @classmethod
     def from_vector(cls, v: Vector3 | None) -> Rgb | None:
-        return None if v is None else cls.of(v.x, v.y, v.z)
+        return None if v is None else cls.of(v.x, v.y, v.z).drawn()
+
+    @classmethod
+    def parse(cls, hex_: str) -> Rgb:
+        return cls(int(hex_[1:3], 16), int(hex_[3:5], 16), int(hex_[5:7], 16))
+
+    def drawn(self) -> Rgb:
+        """The colour the editor paints for this stored one: boards store the
+        legacy palette, the editor draws its current theme's token."""
+        return Rgb.parse(drawn(self.hex))
 
     @classmethod
     def from_float32_be(cls, raw: Any) -> Rgb | None:
@@ -88,7 +98,7 @@ class Rgb:
             r, g, b = struct.unpack(">3f", bytes(int(v) for v in data))
         except (struct.error, ValueError):
             return None
-        return cls.of(r, g, b)
+        return cls.of(r, g, b).drawn()
 
 
 def _channel(v: float) -> int:

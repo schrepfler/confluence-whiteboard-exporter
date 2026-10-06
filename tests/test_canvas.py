@@ -35,8 +35,8 @@ def test_node_and_edge_counts() -> None:
 
 
 def test_unfilled_shape_is_coloured_by_its_outline() -> None:
-    # strokeColor (151, 79, 12) is far from every Obsidian preset: raw hex.
-    assert _node(_doc(), "shape-A").color == "#974F0C"
+    # strokeColor (151, 79, 12), drawn #9E4C00, is far from every Obsidian preset: raw hex.
+    assert _node(_doc(), "shape-A").color == "#9E4C00"
 
 
 def test_filled_shape_is_coloured_by_its_fill_snapped_to_preset() -> None:

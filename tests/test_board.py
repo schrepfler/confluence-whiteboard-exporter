@@ -137,7 +137,7 @@ def test_fiber_dump_uses_drawn_geometry_and_decodes_colours() -> None:
     s1, s2 = board.node("S1"), board.node("S2")
     # Centred on p#; the basis box grew downward by twice the centre's shift.
     assert (s1.x, s1.y, s1.w, s1.h) == (-149, -52, 298, 204), "basis box, not the 160x160 size"
-    assert s1.fill is None and s1.stroke == Rgb(0, 85, 204) and s1.stroke_style == "dashed"
+    assert s1.fill is None and s1.stroke == Rgb.parse("#1558BC") and s1.stroke_style == "dashed", "stored #0055CC, drawn in the theme"
     assert s2.fill == Rgb(10, 20, 30) and s2.shape_kind == 13
     assert [n.kind for n in board.nodes] == [Kind.SHAPE, Kind.SHAPE, Kind.IMAGE]
     assert board.node("I1").image.href == "media/abc.png"
@@ -304,3 +304,19 @@ def test_fiber_waypoints_bend_their_connector() -> None:
     }
     board = from_dump(DumpFile.model_validate({"board": META, "strategy": "fiber", "fiber_dump": fiber}))
     assert board.edges[0].waypoints == ((1, 2), (3, 4))
+
+
+def test_stored_colours_are_drawn_in_the_editors_theme() -> None:
+    # Boards store the legacy palette; the editor paints its current theme's
+    # token: navy text becomes near-black, the grey fill a neutral grey.
+    board = _clip({"type": "shape", "position": {"x": 0, "y": 0}, "size": {"x": 10, "y": 10}, "fillEnabled": True,
+                   "color": {"x": 179, "y": 185, "z": 196}, "strokeColor": {"x": 23, "y": 43, "z": 77}})
+    n = board.nodes[0]
+    assert (n.fill.hex, n.stroke.hex) == ("#B7B9BE", "#292A2E")
+
+
+def test_a_colour_outside_the_palette_is_drawn_as_stored() -> None:
+    from wb2canvas.palette import drawn
+
+    assert drawn("#123456") == "#123456"
+    assert drawn("#172b4d") == "#292A2E"

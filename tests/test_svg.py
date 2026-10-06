@@ -84,7 +84,7 @@ def test_a_section_painted_with_the_stroke_colour_ignores_the_fill() -> None:
     # The UML start node is a solid dot in the line colour, filled or not.
     group = _shape_group(_svg_for([{"type": "shape", "shape": 80, "position": {"x": 0, "y": 0},
                                     "size": {"x": 60, "y": 60}, "strokeColor": {"x": 0, "y": 85, "z": 204}}]))
-    assert 'fill="#0055CC"' in group
+    assert 'fill="#1558BC"' in group, "stored #0055CC, drawn in the theme"
 
 
 def test_text_goes_in_the_drawings_text_area() -> None:
@@ -284,7 +284,7 @@ def _labelled(**label) -> list[dict]:
 def test_a_connector_label_sits_on_the_line_above_every_connector() -> None:
     svg = _svg_for(_labelled())
     group = re.search(r'<g class="wb-label".*?</g>', svg).group(0)
-    assert "Calls" in group and "color:#172B4D" in group
+    assert "Calls" in group and "color:#292A2E" in group
     # Halfway along the straight line from (50, 0) to (250, 200).
     assert 'data-x="150" data-y="100"' in group
     assert svg.index('class="wb-label"') > svg.rindex('class="wb-edge"'), "drawn after the connectors"

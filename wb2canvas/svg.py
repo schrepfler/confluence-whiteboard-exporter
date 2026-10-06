@@ -16,12 +16,13 @@ from collections import Counter
 from .adf import _xml_escape
 from .board import SVG_METRICS, Board, Box, Edge, Kind, Label, Node, Point, Rgb, anchor_point, anchor_side, layout
 from .connectors import ARROWHEAD_SCALE, ARROWHEADS, End, Route, end_stub, point_at, route, thickness
+from .palette import drawn
 from .shapes import DASH_PERIOD, DASH_SHARE, SHAPE_LINE_WIDTH, Section, dash_layout, drawing, fmt, kind_label, resolve
 
 log = logging.getLogger(__name__)
 
-DEFAULT_STROKE = "#172B4D"
-EDGE_DEFAULT_STROKE = "#758195"
+DEFAULT_STROKE = drawn("#172B4D")  # the editor's default text and outline colour
+EDGE_DEFAULT_STROKE = drawn("#758195")
 MARGIN = 60
 BASE_FONT_PX = 13.0
 LABEL_PADDING = 4.0  # round a connector label's text, as in the editor
@@ -153,7 +154,7 @@ def _marker(name: str, stroke_size: int) -> str:
 _STYLE = (
     "<style>"
     ".node-text{display:flex;flex-direction:column;margin:0;padding:8px 12px;"
-    "color:#172B4D;line-height:1.35;height:100%;width:100%;"
+    f"color:{DEFAULT_STROKE};line-height:1.35;height:100%;width:100%;"
     "box-sizing:border-box;overflow:hidden;}"
     ".node-free{display:block;height:auto;width:auto;padding:0;overflow:visible;}"
     ".node-body{margin:0;overflow-wrap:anywhere;}"
@@ -184,7 +185,7 @@ def _render_node(node: Node, box: Box, smap: dict[int, int]) -> str:
         else:  # not downloaded: a placeholder rather than a broken link
             inner = (
                 f'<rect x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}" fill="#F1F2F4" '
-                f'stroke="#B3B9C4" stroke-width="1" stroke-dasharray="4,3"/>'
+                f'stroke="{drawn("#B3B9C4")}" stroke-width="1" stroke-dasharray="4,3"/>'
                 f'<text x="{fmt(x + w / 2)}" y="{fmt(y + h / 2)}" text-anchor="middle" dominant-baseline="middle" '
                 f'font-size="{fmt(min(12.0, h / 3))}" fill="#626F86">image</text>'
             )

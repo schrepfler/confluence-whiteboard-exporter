@@ -1,0 +1,275 @@
+{
+ "source": "Confluence whiteboard editor palette resolved against its light theme; regenerate with scripts/dump_palette.js and scripts/build_palette.py",
+ "colours": {
+  "#000000": {
+   "value": "#1E1F21",
+   "name": "none",
+   "token": "color.text.accent.gray.bolder"
+  },
+  "#172B4D": {
+   "value": "#292A2E",
+   "name": "textDefaultColor",
+   "token": "color.text"
+  },
+  "#0055CC": {
+   "value": "#1558BC",
+   "name": "textAccentBlue",
+   "token": "color.text.accent.blue"
+  },
+  "#206B74": {
+   "value": "#206A83",
+   "name": "textAccentTeal",
+   "token": "color.text.accent.teal"
+  },
+  "#216E4E": {
+   "value": "#216E4E",
+   "name": "textAccentGreen",
+   "token": "color.text.accent.green"
+  },
+  "#4C6B1F": {
+   "value": "#4C6B1F",
+   "name": "textAccentLime",
+   "token": "color.text.accent.lime"
+  },
+  "#7F5F01": {
+   "value": "#7F5F01",
+   "name": "textAccentYellow",
+   "token": "color.text.accent.yellow"
+  },
+  "#974F0C": {
+   "value": "#9E4C00",
+   "name": "textAccentOrange",
+   "token": "color.text.accent.orange"
+  },
+  "#AE2A19": {
+   "value": "#AE2E24",
+   "name": "textAccentRed",
+   "token": "color.text.accent.red"
+  },
+  "#943D73": {
+   "value": "#943D73",
+   "name": "textAccentMagenta",
+   "token": "color.text.accent.magenta"
+  },
+  "#5E4DB2": {
+   "value": "#803FA5",
+   "name": "textAccentPurple",
+   "token": "color.text.accent.purple"
+  },
+  "#44546F": {
+   "value": "#505258",
+   "name": "n800",
+   "token": "color.text.accent.gray"
+  },
+  "#758195": {
+   "value": "#7D818A",
+   "name": "n600",
+   "token": "color.border.accent.gray"
+  },
+  "#1D7AFC": {
+   "value": "#357DE8",
+   "name": "b600",
+   "token": "color.border.accent.blue"
+  },
+  "#1D9AAA": {
+   "value": "#2898BD",
+   "name": "t600",
+   "token": "color.border.accent.teal"
+  },
+  "#22A06B": {
+   "value": "#22A06B",
+   "name": "g600",
+   "token": "color.border.accent.green"
+  },
+  "#6A9A23": {
+   "value": "#6A9A23",
+   "name": "l600",
+   "token": "color.border.accent.lime"
+  },
+  "#B38600": {
+   "value": "#B38600",
+   "name": "y600",
+   "token": "color.border.accent.yellow"
+  },
+  "#DB6E00": {
+   "value": "#E06C00",
+   "name": "o600",
+   "token": "color.border.accent.orange"
+  },
+  "#E8422C": {
+   "value": "#E2483D",
+   "name": "r600",
+   "token": "color.border.accent.red"
+  },
+  "#CD519D": {
+   "value": "#CD519D",
+   "name": "m600",
+   "token": "color.border.accent.magenta"
+  },
+  "#8270DB": {
+   "value": "#AF59E1",
+   "name": "p600",
+   "token": "color.border.accent.purple"
+  },
+  "#B3B9C4": {
+   "value": "#B7B9BE",
+   "name": "n400",
+   "token": "color.background.accent.gray.subtler.hovered"
+  },
+  "#85B8FF": {
+   "value": "#ADCBFB",
+   "name": "b300",
+   "token": "color.background.accent.blue.subtlest.pressed"
+  },
+  "#74DBE7": {
+   "value": "#B1E4F7",
+   "name": "t300",
+   "token": "color.background.accent.teal.subtlest.pressed"
+  },
+  "#76E0B4": {
+   "value": "#97EDC9",
+   "name": "g300",
+   "token": "color.background.accent.green.subtlest.pressed"
+  },
+  "#B3E972": {
+   "value": "#BDE97C",
+   "name": "l300",
+   "token": "color.background.accent.lime.subtlest.pressed"
+  },
+  "#FFDE5C": {
+   "value": "#EFDD4E",
+   "name": "y300",
+   "token": "color.background.accent.yellow.subtlest.pressed"
+  },
+  "#FEC176": {
+   "value": "#FBD779",
+   "name": "o300",
+   "token": "color.background.accent.orange.subtlest.pressed"
+  },
+  "#FF9A8F": {
+   "value": "#FFB8B2",
+   "name": "r300",
+   "token": "color.background.accent.red.subtlest.pressed"
+  },
+  "#F797D2": {
+   "value": "#FCB6E1",
+   "name": "m300",
+   "token": "color.background.accent.magenta.subtlest.pressed"
+  },
+  "#B8ACF6": {
+   "value": "#E3BDFA",
+   "name": "p300",
+   "token": "color.background.accent.purple.subtlest.pressed"
+  },
+  "#F1F2F4": {
+   "value": "#F0F1F2",
+   "name": "n200",
+   "token": "color.background.accent.gray.subtlest"
+  },
+  "#CCE0FF": {
+   "value": "#CFE1FD",
+   "name": "b200",
+   "token": "color.background.accent.blue.subtler"
+  },
+  "#C8F4F9": {
+   "value": "#C6EDFB",
+   "name": "teal",
+   "token": "color.background.accent.teal.subtlest.hovered"
+  },
+  "#C7F8E3": {
+   "value": "#BAF3DB",
+   "name": "g150",
+   "token": "color.background.accent.green.subtlest.hovered"
+  },
+  "#D3F1A7": {
+   "value": "#D3F1A7",
+   "name": "l200",
+   "token": "color.background.accent.lime.subtlest.hovered"
+  },
+  "#FFEFAE": {
+   "value": "#F5E989",
+   "name": "y150",
+   "token": "color.background.accent.yellow.subtler"
+  },
+  "#FFDEB8": {
+   "value": "#FCE4A6",
+   "name": "orange",
+   "token": "color.background.accent.orange.subtler"
+  },
+  "#FFD2CC": {
+   "value": "#FFD5D2",
+   "name": "red",
+   "token": "color.background.accent.red.subtler"
+  },
+  "#FDD0EC": {
+   "value": "#FDD0EC",
+   "name": "m200",
+   "token": "color.background.accent.magenta.subtler"
+  },
+  "#DFD8FD": {
+   "value": "#EED7FC",
+   "name": "p200",
+   "token": "color.background.accent.purple.subtler"
+  },
+  "#FFFFFF": {
+   "value": "#FFFFFF",
+   "name": "white",
+   "token": "color.background.input"
+  },
+  "#E9F2FF": {
+   "value": "#E9F2FE",
+   "name": "b100",
+   "token": "color.background.accent.blue.subtlest"
+  },
+  "#E3FAFC": {
+   "value": "#E7F9FF",
+   "name": "t100",
+   "token": "color.background.accent.teal.subtlest"
+  },
+  "#DFFCF0": {
+   "value": "#DCFFF1",
+   "name": "g100",
+   "token": "color.background.accent.green.subtlest"
+  },
+  "#EFFFD6": {
+   "value": "#EFFFD6",
+   "name": "l100",
+   "token": "color.background.accent.lime.subtlest"
+  },
+  "#FFF7D6": {
+   "value": "#FEF7C8",
+   "name": "y100",
+   "token": "color.background.accent.yellow.subtlest"
+  },
+  "#FFF5EB": {
+   "value": "#FFF5DB",
+   "name": "o100",
+   "token": "color.background.accent.orange.subtlest"
+  },
+  "#FFEDEB": {
+   "value": "#FFECEB",
+   "name": "r100",
+   "token": "color.background.accent.red.subtlest"
+  },
+  "#FFECF8": {
+   "value": "#FFECF8",
+   "name": "m100",
+   "token": "color.background.accent.magenta.subtlest"
+  },
+  "#F3F0FF": {
+   "value": "#F8EEFE",
+   "name": "p100",
+   "token": "color.background.accent.purple.subtlest"
+  },
+  "#D97008": {
+   "value": "#E06C00",
+   "name": "iconAccentOrange",
+   "token": "color.icon.accent.orange"
+  },
+  "#E34935": {
+   "value": "#C9372C",
+   "name": "iconAccentRed",
+   "token": "color.icon.accent.red"
+  }
+ }
+}
