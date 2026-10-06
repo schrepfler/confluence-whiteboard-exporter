@@ -87,6 +87,15 @@ class ClipboardElement(BaseModel):
     order: float | None = None
     axis: int | None = None
 
+    # pathLabel: text on the connector at sourcePathIndex.
+    proportion: float | None = None  # how far along the connector, 0-1
+    pathOffsetPosition: int | None = None  # 0 on the line, 1 left of it, 2 right
+
+    # advanced-icon: an icon from Atlassian's icon library.
+    iconId: str | None = None
+    category: str | None = None
+    collection: str | None = None
+
     fileId: str | None = None
     mimeType: str | None = None
     nativeSize: Vector2 | None = None

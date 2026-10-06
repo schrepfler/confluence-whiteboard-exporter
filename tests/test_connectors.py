@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from wb2canvas.connectors import ARROWHEADS, TENSION, End, end_stub, route, smooth_spline
+from wb2canvas.connectors import ARROWHEADS, TENSION, End, _through_handles, end_stub, point_at, route, smooth_spline
 
 
 def _last(r) -> tuple[float, float]:
@@ -72,8 +72,34 @@ def test_every_cap_has_an_arrowhead() -> None:
     assert set(CAPS.values()) - {"none"} == set(ARROWHEADS)
 
 
-def test_right_angled_route_keeps_right_angles_through_waypoints() -> None:
-    r = route("dynamic", End((0, 0), "right"), End((300, 200), "left"), ((150, -50),))
-    pts = r.points()
-    assert all(a[0] == b[0] or a[1] == b[1] for a, b in zip(pts, pts[1:], strict=False))
-    assert (150, -50) in pts
+def _straight_runs(r) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    runs, cur = [], r.start
+    for seg in r.segments:
+        if len(seg) == 1:
+            runs.append((cur, seg[0]))
+        cur = seg[-1]
+    return runs
+
+
+def test_a_waypoint_handle_pins_its_segment_as_in_the_editor() -> None:
+    # An "x" handle pins a vertical segment at its x, whatever its y.
+    a, b = End((0, 0), "right", box=(-100, -30, 100, 60)), End((300, 200), "left", box=(300, 170, 100, 60))
+    assert _through_handles(a, b, ((150, -50),), ("x",), 1) == [(0, 0), (150, 0), (150, 200), (300, 200)]
+    # A "y" handle between ends that face each other needs a stub out of each
+    # box to its margin (4 x line width + 10 = 18), as the editor routes it.
+    pts = _through_handles(a, b, ((150, 100),), ("y",), 1)
+    assert pts == [(0, 0), (18, 0), (18, 100), (282, 100), (282, 200), (300, 200)]
+
+
+def test_right_angled_bends_are_rounded() -> None:
+    a, b = End((0, 0), "right", box=(-100, -30, 100, 60)), End((300, 200), "left", box=(300, 170, 100, 60))
+    r = route("dynamic", a, b, ((150, -50),), axes=("x",))
+    assert all(p[0] == q[0] or p[1] == q[1] for p, q in _straight_runs(r)), "straight runs are axis-aligned"
+    assert [seg for seg in r.segments if len(seg) == 3], "bends are curves"
+    assert _straight_runs(r)[0] == ((0, 0), (140, 0)), "the bend starts 10 before the corner"
+
+
+def test_a_label_sits_at_its_proportion_of_the_path() -> None:
+    r = route("straight", End((0, 0), "right"), End((200, 0), "left"))
+    (x, y), angle = point_at(r, 0.25)
+    assert (x, y, angle) == pytest.approx((50, 0, 0))

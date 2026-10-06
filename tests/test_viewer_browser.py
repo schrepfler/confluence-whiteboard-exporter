@@ -6,7 +6,6 @@ suite does not depend on Playwright's own, purgeable, browser download).
 
 from __future__ import annotations
 
-import itertools
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -114,11 +113,17 @@ def test_dragging_keeps_a_right_angled_connector_right_angled(browser, tmp_path:
     page.mouse.up()
 
     d = edge.get_attribute("d")
-    assert d != d_before and " C " not in d
-    nums = [float(v) for v in re.findall(r"-?[0-9.]+(?:e-?[0-9]+)?", d)]
-    pts = list(zip(nums[::2], nums[1::2], strict=True))
-    assert len(pts) >= 3
-    assert all(abs(a[0] - b[0]) < 1e-6 or abs(a[1] - b[1]) < 1e-6 for a, b in itertools.pairwise(pts))
+    assert d != d_before
+    # Straight runs (M/L to the next L) stay axis-aligned; bends are curves.
+    cmds = re.findall(r"([MLC])((?:[\s,]*-?[0-9.]+(?:e-?[0-9]+)?)+)", d)
+    runs, cur = [], None
+    for op, args in cmds:
+        nums = [float(v) for v in args.replace(",", " ").split()]
+        end = (nums[-2], nums[-1])
+        if op == "L":
+            runs.append((cur, end))
+        cur = end
+    assert runs and all(abs(a[0] - b[0]) < 1e-6 or abs(a[1] - b[1]) < 1e-6 for a, b in runs)
     assert errors == []
 
 
@@ -129,8 +134,8 @@ def _parity_board():
     def box(x: float, y: float) -> dict:
         return {"type": "shape", "shape": 0, "position": {"x": x, "y": y}, "size": {"x": 100, "y": 60}}
 
-    def wp(i: int, order: float, x: float, y: float) -> dict:
-        return {"type": "pathWaypoint", "sourcePathIndex": i, "order": order, "position": {"x": x, "y": y}}
+    def wp(i: int, order: float, x: float, y: float, axis: int | None = None) -> dict:
+        return {"type": "pathWaypoint", "sourcePathIndex": i, "order": order, "position": {"x": x, "y": y}, "axis": axis}
 
     els = [box(0, 0), box(400, 250), box(-300, 400)]
     cases = [  # (presentation, start cap, end cap, source anchor, target anchor, waypoints)
@@ -141,13 +146,21 @@ def _parity_board():
         (1, 3, 14, (1, 0.5), (0, 0.5), [(200, 50)]),
         (2, 1, 5, (1, 0.5), (0.5, 0), []),
         (2, 7, 13, (0.5, 1), (1, 0.5), [(100, 300)]),
+        # Right-angled handles: axis 0 pins a vertical segment, 1 a horizontal one.
+        (2, 1, 2, (1, 0.5), (0, 0.5), [(-150, 200, 0)]),
+        (2, 1, 2, (0.5, 1), (0, 0.5), [(0, 160, 1), (-420, 0, 0)]),
+        (2, 6, 3, (1, 0.5), (1, 0.5), [(-100, 250, 1)]),
+        # An anchor near a corner, as on real boards: fractions keep their precision.
+        (2, 1, 2, (1, 0.0388), (0.5, 0), [(300, -28, 1)]),
     ]
     for pr, sc, ec, sa, ta, wps in cases:
         i = len(els)
         els.append({"type": "connector", "sourceIndex": 0, "targetIndex": 1 if pr != 2 else 2, "presentation": pr,
                     "startCap": sc, "endCap": ec, "stroke": 1 + i % 3,
                     "sourceAnchor": {"left": sa[0], "top": sa[1]}, "targetAnchor": {"left": ta[0], "top": ta[1]}})
-        els.extend(wp(i, n, x, y) for n, (x, y) in enumerate(wps))
+        els.extend(wp(i, n, *p) for n, p in enumerate(wps))
+    els.append({"type": "pathLabel", "sourcePathIndex": i, "proportion": 0.3418, "pathOffsetPosition": 1,
+                "text": '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Calls"}]}]}'})
     return from_dump(DumpFile.model_validate({"board": {"boardId": "p", "title": "p", "spaceKey": "S"},
                                               "strategy": "clipboard", "elements": els}))
 
@@ -157,7 +170,7 @@ def test_the_viewer_routes_connectors_exactly_like_the_exporter(browser, tmp_pat
     exported = re.findall(r'<path class="wb-edge"[^>]*\sd="([^"]+)"', html)
     page, errors = _open(browser, tmp_path, html)
     redrawn = page.evaluate("() => [...document.querySelectorAll('path.wb-edge')].map(p => p.getAttribute('d'))")
-    assert errors == [] and len(redrawn) == len(exported) == 7
+    assert errors == [] and len(redrawn) == len(exported) == 11
 
     def numbers(d: str) -> list[float]:
         return [float(v) for v in re.findall(r"-?[0-9.]+(?:e-?[0-9]+)?", d)]
@@ -165,6 +178,9 @@ def test_the_viewer_routes_connectors_exactly_like_the_exporter(browser, tmp_pat
     for py, js in zip(exported, redrawn, strict=True):
         assert re.findall("[MLC]", js) == re.findall("[MLC]", py), (py, js)
         assert numbers(js) == pytest.approx(numbers(py), abs=0.06), (py, js)
+    # The label stays where the exporter put it.
+    shift = page.evaluate("() => document.querySelector('g.wb-label').getAttribute('transform')")
+    assert numbers(shift) == pytest.approx([0, 0], abs=0.06), shift
 
 
 def test_the_viewer_lays_out_shape_outlines_exactly_like_the_exporter(browser, tmp_path: Path) -> None:
@@ -191,4 +207,23 @@ def test_the_viewer_lays_out_shape_outlines_exactly_like_the_exporter(browser, t
                     assert nums(jd) == pytest.approx(nums(pd), abs=0.06), (kind, pd, jd)
                     assert jdash == pytest.approx(pdash, rel=1e-6, abs=1e-9), kind
                     assert joff == pytest.approx(poff, rel=1e-6, abs=1e-9), kind
+    assert errors == []
+
+
+def test_a_label_rides_along_when_its_connector_moves(browser, tmp_path: Path) -> None:
+    from wb2canvas.board import Label
+
+    board = load_board(FIXTURE)
+    board.edges[0].labels = (Label(adf='{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Calls"}]}]}'),)
+    page, errors = _open(browser, tmp_path, render_html(board))
+    label = page.locator("g.wb-label")
+    before = label.bounding_box()
+    box = page.locator('g.wb-node[data-id="shape-A"]').bounding_box()
+    cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    page.mouse.move(cx, cy)
+    page.mouse.down()
+    page.mouse.move(cx, cy + 120, steps=5)
+    page.mouse.up()
+    after = label.bounding_box()
+    assert after["y"] > before["y"] + 20, "the label follows its connector down"
     assert errors == []

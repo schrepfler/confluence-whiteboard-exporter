@@ -41,6 +41,8 @@ ROUTINGS = {1: "straight", 2: "dynamic", 3: "curved"}
 _VALIGN = {0: "top", 1: "middle", 2: "bottom"}  # observed: shapes use 1 (middle)
 _HALIGN = frozenset({"left", "center", "right"})
 _FIBER_HALIGN = {0: "center", 1: "left", 2: "right"}
+_AXES = {0: "x", 1: "y"}  # pathWaypoint axis: the segment a right-angled handle pins
+LABEL_SIDES = {0: "centre", 1: "left", 2: "right"}
 
 Box = tuple[float, float, float, float]
 Point = tuple[float, float]
@@ -98,6 +100,7 @@ class Kind(StrEnum):
     TEXT = "text"  # free-floating text; sizes to its content
     IMAGE = "image"
     LINE = "line"  # freehand line, e.g. a section divider
+    ICON = "icon"  # an icon from Atlassian's library; its artwork is not available
 
 
 @dataclass(frozen=True)
@@ -127,6 +130,7 @@ class Node:
     adf: str | None = None  # Atlassian Document Format, as JSON text
     image: Image | None = None
     points: tuple[Point, ...] = ()  # LINE endpoints
+    icon: str | None = None  # ICON: the library icon's name
 
     @cached_property
     def markdown(self) -> str | None:
@@ -135,6 +139,25 @@ class Node:
     @cached_property
     def html(self) -> str:
         return adf_to_html(self.adf) if self.adf else ""
+
+
+@dataclass(frozen=True)
+class Label:
+    """Text on a connector, at `proportion` of the way along it."""
+
+    adf: str
+    color: Rgb | None = None
+    font_scale: float = 1.0
+    proportion: float = 0.5
+    side: str = "centre"  # on the line, or beside it ("left"/"right" of travel)
+
+    @cached_property
+    def markdown(self) -> str:
+        return adf_to_markdown(self.adf) or ""
+
+    @cached_property
+    def html(self) -> str:
+        return adf_to_html(self.adf)
 
 
 @dataclass(eq=False)
@@ -150,6 +173,8 @@ class Edge:
     end_cap: str = "none"
     routing: str = "curved"  # a ROUTINGS value
     waypoints: tuple[Point, ...] = ()  # bend points, in order
+    waypoint_axes: tuple[str | None, ...] = ()  # right-angled: "x"/"y" segment each pins
+    labels: tuple[Label, ...] = ()
     color: Rgb | None = None
     stroke_style: str = "solid"
     stroke_size: int = 1  # 1 small, 2 medium, 3 large
@@ -195,6 +220,7 @@ class _Losses:
     elements: Counter[str] = field(default_factory=Counter)
     values: set[str] = field(default_factory=set)
     missing_images: int = 0
+    icons: int = 0
 
     def enum(self, table: dict[int, str], value: Any, what: str, default: str) -> str:
         if value is None:
@@ -211,6 +237,9 @@ class _Losses:
             log.warning("board %s: omitted elements it cannot draw: %s", board_id, omitted)
         if self.values:
             log.warning("board %s: unknown %s; drawn with defaults", board_id, ", ".join(sorted(self.values)))
+        if self.icons:
+            log.warning("board %s: %d library icon(s) drawn as placeholders (their artwork is not available)",
+                        board_id, self.icons)
         if self.missing_images:
             log.warning("board %s: %d image(s) were not downloaded; drawn as placeholders",
                         board_id, self.missing_images)
@@ -226,26 +255,42 @@ def _from_clipboard(
     media = _with_shared_pictures(media, ((e.fileId, e.imageHash) for e in elements if e.type == "image"))
     nodes: list[Node] = []
     edges: dict[int, Edge] = {}
-    bends: dict[int, list[tuple[float, Point]]] = defaultdict(list)
+    bends: dict[int, list[tuple[float, Point, str | None]]] = defaultdict(list)
+    labels: dict[int, list[Label]] = defaultdict(list)
     for i, e in enumerate(elements):
         if e.type == "connector":
             edges[i] = _clip_edge(ids[i], e, ids, losses)
         elif e.type == "pathWaypoint" and e.position and e.sourcePathIndex is not None:
-            bends[e.sourcePathIndex].append((e.order or 0.0, (e.position.x, e.position.y)))
+            bends[e.sourcePathIndex].append((e.order or 0.0, (e.position.x, e.position.y), _AXES.get(e.axis)))
+        elif e.type == "pathLabel" and e.sourcePathIndex is not None and e.text:
+            labels[e.sourcePathIndex].append(Label(
+                adf=_fix_mojibake(e.text) or "",
+                color=Rgb.from_vector(e.color),
+                font_scale=_scale(e.fontScale),
+                proportion=e.proportion if e.proportion is not None else 0.5,
+                side=losses.enum(LABEL_SIDES, e.pathOffsetPosition, "label side", "centre"),
+            ))
         elif node := _clip_node(ids[i], e, media, losses):
             nodes.append(node)
         else:
             losses.elements[e.type] += 1
     _attach_waypoints(edges, bends, losses)
+    for key, items in labels.items():
+        if (edge := edges.get(key)) is None:
+            losses.elements["pathLabel"] += len(items)
+        else:
+            edge.labels = tuple(items)
     return nodes, list(edges.values())
 
 
-def _attach_waypoints(edges: dict[Any, Edge], bends: dict[Any, list[tuple[float, Point]]], losses: _Losses) -> None:
+def _attach_waypoints(edges: dict[Any, Edge], bends: dict[Any, list[tuple[float, Point, str | None]]], losses: _Losses) -> None:
     for key, points in bends.items():
         if (edge := edges.get(key)) is None:
             losses.elements["pathWaypoint"] += len(points)
         else:
-            edge.waypoints = tuple(p for _, p in sorted(points))
+            ordered = sorted(points, key=lambda b: b[0])
+            edge.waypoints = tuple(p for _, p, _ in ordered)
+            edge.waypoint_axes = tuple(a for _, _, a in ordered)
 
 
 def _clip_node(nid: str, e: ClipboardElement, media: dict[str, str], losses: _Losses) -> Node | None:
@@ -291,6 +336,15 @@ def _clip_node(nid: str, e: ClipboardElement, media: dict[str, str], losses: _Lo
         if start and end:
             style = losses.enum(STROKE_STYLES, e.strokeStyle, "stroke style", "solid")
             return _line(nid, (start, end), Rgb.from_vector(e.color), style, float(e.stroke or 1))
+    if e.type == "advanced-icon" and e.position:
+        x, y, w, h = _drawn_box(e)
+        losses.icons += 1
+        return Node(
+            id=nid, kind=Kind.ICON, x=x, y=y, w=w, h=h,
+            stroke=Rgb.from_vector(e.color),
+            icon=_icon_name(e.iconId) or e.category or "icon",
+            adf=_fix_mojibake(e.text),
+        )
     return None  # not drawn yet: stickies, sections, tables, ...
 
 
@@ -319,6 +373,11 @@ def _with_shared_pictures(media: dict[str, str], images: Iterable[tuple[str | No
     images = [(f, h) for f, h in images if f]
     by_hash = {h: media[f] for f, h in images if h and f in media}
     return {**{f: by_hash[h] for f, h in images if f not in media and h in by_hash}, **media}
+
+
+def _icon_name(icon_id: str | None) -> str | None:
+    """'Amazon-Simple-Storage-Service' -> 'Amazon Simple Storage Service'."""
+    return icon_id.replace("-", " ").replace("_", " ").strip() if icon_id else None
 
 
 def _image(file_id: str, media: dict[str, str], losses: _Losses) -> Image:
@@ -432,14 +491,15 @@ def _from_fiber(fd: FiberDump, media: dict[str, str], losses: _Losses) -> tuple[
     order = list(fd.zindex) + [k for k in fd.board if k not in in_z]
     nodes: list[Node] = []
     edges: dict[str, Edge] = {}
-    bends: dict[str, list[tuple[float, Point]]] = defaultdict(list)
+    bends: dict[str, list[tuple[float, Point, str | None]]] = defaultdict(list)
     for eid in order:
         raw = fd.board.get(eid)
         if not isinstance(raw, dict):
             continue
         t, d = raw.get("t"), dims.get(eid, {})
         if t == "pathWaypoint" and raw.get("pi") and (d.get("bp") or d.get("p")):
-            bends[str(raw["pi"])].append((_num(raw.get("or"), 0.0), _pair(d.get("bp") or d.get("p"))))
+            bends[str(raw["pi"])].append((_num(raw.get("or"), 0.0), _pair(d.get("bp") or d.get("p")),
+                                          _AXES.get(raw.get("ax"))))
             continue
         if t == "connector":
             edges[eid] = Edge(

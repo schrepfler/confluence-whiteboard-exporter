@@ -7,7 +7,7 @@ import pytest
 
 from wb2canvas.board import from_dump, load_board
 from wb2canvas.canvas import CanvasDoc, CanvasNode, push_apart, render_canvas
-from wb2canvas.model import DumpFile
+from wb2canvas.model import ClipboardElement, DumpFile
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_dump.json"
 IMAGE_HREF = "media/3326b2e5-07e9-49ce-9b79-36a2d5a986fe.jpeg"
@@ -132,3 +132,11 @@ def test_push_apart_resolves_chain_of_three() -> None:
              for k, x in (("a", 0), ("b", 50), ("c", 100))]
     push_apart(nodes)
     assert not any(_overlap(nodes[i], nodes[j]) for i in range(3) for j in range(i + 1, 3))
+
+
+def test_connector_labels_become_edge_labels() -> None:
+    dump = DumpFile.model_validate_json(FIXTURE.read_text())
+    dump.elements.append(ClipboardElement.model_validate({
+        "type": "pathLabel", "sourcePathIndex": 3, "proportion": 0.5,
+        "text": '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Calls"}]}]}'}))
+    assert render_canvas(from_dump(dump)).edges[0].label == "Calls"

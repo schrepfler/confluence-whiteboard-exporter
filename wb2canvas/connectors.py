@@ -18,6 +18,7 @@ TENSION = 0.38
 THICKNESS = {1: 2.0, 2: 4.0, 3: 6.0}
 ARROWHEAD_SCALE = {1: 1.0, 2: 1.2, 3: 1.6}
 ELBOW_STUB = 24.0  # how far a right-angled connector runs straight out of its box
+BEND_RADIUS = 10.0  # right-angled connectors round their bends
 
 
 def thickness(stroke_size: int) -> float:
@@ -103,13 +104,23 @@ class End:
     point: Point
     side: str | None  # box edge the end is anchored to; None if free or centred
     cap: str = "none"
+    box: tuple[float, float, float, float] | None = None  # (x, y, w, h) of the element it is attached to
 
 
-def route(routing: str, start: End, end: End, waypoints: tuple[Point, ...] = (), stroke_size: int = 1) -> Route:
+def route(
+    routing: str,
+    start: End,
+    end: End,
+    waypoints: tuple[Point, ...] = (),
+    stroke_size: int = 1,
+    axes: tuple[str | None, ...] = (),
+) -> Route:
+    """`axes` gives each waypoint's handle axis on a right-angled connector:
+    "x" pins a vertical segment at the waypoint's x, "y" a horizontal one."""
     if routing == "straight":
         return _straight(start, end, waypoints, stroke_size)
     if routing == "dynamic":
-        return _dynamic(start, end, waypoints, stroke_size)
+        return _dynamic(start, end, waypoints, axes, stroke_size)
     return _curved(start, end, waypoints, stroke_size)
 
 
@@ -119,23 +130,100 @@ def _straight(start: End, end: End, waypoints: tuple[Point, ...], stroke_size: i
     return Route(pts[0], tuple((p,) for p in pts[1:]))
 
 
-def _dynamic(start: End, end: End, waypoints: tuple[Point, ...], stroke_size: int) -> Route:
-    """Right angles only. The editor routes around other shapes; this does
-    not, and through waypoints it takes a staircase: each leg turns once."""
-    s_ext, _ = end_stub(start.cap, stroke_size)
-    t_ext, _ = end_stub(end.cap, stroke_size)
-    stub = max(ELBOW_STUB, s_ext + 10, t_ext + 10)
-    if waypoints:
-        pts = [start.point]
-        horizontal = _outward(start.side, *_delta(start.point, waypoints[0]), True)[0] != 0
-        for p in (*waypoints, end.point):
-            a = pts[-1]
-            pts.append((p[0], a[1]) if horizontal else (a[0], p[1]))
-            pts.append(p)
+def _dynamic(start: End, end: End, waypoints: tuple[Point, ...], axes: tuple[str | None, ...], stroke_size: int) -> Route:
+    """Right angles, with rounded bends. Through waypoints this is the
+    editor's own route; without them the editor routes around other shapes,
+    while this takes a simple elbow."""
+    if waypoints and len(axes) == len(waypoints) and all(a in ("x", "y") for a in axes):
+        pts = _through_handles(start, end, waypoints, axes, stroke_size)  # type: ignore[arg-type]
     else:
+        s_ext, _ = end_stub(start.cap, stroke_size)
+        t_ext, _ = end_stub(end.cap, stroke_size)
+        stub = max(ELBOW_STUB, s_ext + 10, t_ext + 10)
         pts = elbow_points(start.point, end.point, start.side, end.side, stub)
     pts = _trim_ends(_drop_collinear(pts), start.cap, end.cap, stroke_size)
-    return Route(pts[0], tuple((p,) for p in pts[1:]))
+    return _rounded(pts, BEND_RADIUS)
+
+
+_SIDE_DIR = {"right": "+x", "left": "-x", "bottom": "+y", "top": "-y"}
+_OPPOSITE = {"+x": "-x", "-x": "+x", "+y": "-y", "-y": "+y"}
+
+
+def _through_handles(start: End, end: End, waypoints: tuple[Point, ...], axes: tuple[str, ...], stroke_size: int) -> list[Point]:
+    """The editor's route through segment handles (computeFindOrthogonal-
+    PathWithWaypoints). The path is a list of coordinates that alternately
+    move x and y: the start, a stub out to the source box's margin, each
+    handle's pinned coordinate (gaps between two handles on the same axis
+    are interpolated), a stub in from the target's margin, and the end."""
+    margin = 4 * thickness(stroke_size) + 10
+
+    def edge(box: tuple[float, float, float, float], direction: str) -> float:
+        x, y, w, h = box
+        return {"+x": x + w + margin, "-x": x - margin, "+y": y + h + margin, "-y": y - margin}[direction]
+
+    s_dir = _SIDE_DIR.get(start.side or "") if start.box else None
+    t_dir = _OPPOSITE[_SIDE_DIR[end.side]] if end.side in _SIDE_DIR and end.box else None  # heading in
+    x_first = s_dir[1] == "x" if s_dir else axes[0] == "x"
+    vals: list[float | None] = list(start.point if x_first else start.point[::-1])
+
+    def misfit(moves_x: bool) -> bool:  # the next value would move the other axis
+        return moves_x != ((len(vals) % 2 == 0) == x_first)
+
+    if s_dir and start.box and misfit(axes[0] == "x"):
+        vals.append(edge(start.box, s_dir))
+    for p, axis in zip(waypoints, axes, strict=True):
+        if misfit(axis == "x"):
+            vals.append(None)
+        vals.append(p[0] if axis == "x" else p[1])
+    x_last = not (t_dir[1] == "x" if t_dir else axes[-1] == "x")
+    if misfit(x_last):
+        if t_dir and end.box:
+            vals.append(edge(end.box, _OPPOSITE[t_dir]))
+        else:
+            x_last = not x_last
+    vals += list(end.point if x_last else end.point[::-1])
+    _fill_gaps(vals, 0)
+    _fill_gaps(vals, 1)
+    pts = [start.point]
+    for i in range(2, len(vals)):
+        prev, cur = vals[i - 1], vals[i]
+        pts.append((cur, prev) if ((i % 2 == 0) == x_first) else (prev, cur))  # type: ignore[arg-type]
+    return [p for i, p in enumerate(pts) if i == 0 or p != pts[i - 1]]
+
+
+def _fill_gaps(vals: list[float | None], parity: int) -> None:
+    """Interpolate missing values between known ones of the same parity,
+    as the editor does (including its quirk of keeping the last value from
+    before a gap as the reference)."""
+    run, last = 0, 0.0
+    for i in range(parity, len(vals), 2):
+        v = vals[i]
+        if v is None:
+            run += 1
+        elif run:
+            for n in range(run):
+                vals[i - 2 * n - 2] = v + (last - v) * (n + 1) / (run + 1)
+            run = 0
+        else:
+            last = v
+
+
+def _rounded(pts: list[Point], radius: float) -> Route:
+    """A polyline with each bend rounded by a quarter circle of `radius`."""
+    k = 0.5523  # cubic handle length for a quarter circle, per unit radius
+    segs: list[tuple[Point, ...]] = []
+    for i in range(1, len(pts) - 1):
+        a, p, b = pts[i - 1], pts[i], pts[i + 1]
+        din, dout = _unit(_sub(p, a)), _unit(_sub(b, p))
+        if abs(din[0] * dout[0] + din[1] * dout[1]) > 0.999:  # straight on, or doubling back
+            segs.append((p,))
+            continue
+        r = min(radius, _dist(a, p) / 2, _dist(p, b) / 2)
+        p_in, p_out = _sub(p, _scale(din, r)), _add(p, _scale(dout, r))
+        segs.append((p_in,))
+        segs.append((_add(p_in, _scale(din, r * k)), _sub(p_out, _scale(dout, r * k)), p_out))
+    segs.append((pts[-1],))
+    return Route(pts[0], tuple(segs))
 
 
 def _curved(start: End, end: End, waypoints: tuple[Point, ...], stroke_size: int) -> Route:
@@ -166,6 +254,65 @@ def _curved(start: End, end: End, waypoints: tuple[Point, ...], stroke_size: int
     if tail and not t_hidden:
         segments.append((pts[-1],))
     return Route(first, tuple(segments))
+
+
+def point_at(path: Route, proportion: float) -> tuple[Point, float]:
+    """The point `proportion` (0-1) of the way along `path`, by length, and
+    the path's direction there (an angle)."""
+    pieces: list[tuple[Point, ...]] = []
+    cur = path.start
+    for seg in path.segments:
+        pieces.append((cur, *seg))
+        cur = seg[-1]
+    lengths = [_seg_length(p) for p in pieces]
+    remaining = max(0.0, min(1.0, proportion)) * sum(lengths)
+    for i, (piece, length) in enumerate(zip(pieces, lengths, strict=True)):
+        if remaining > length and i < len(pieces) - 1:
+            remaining -= length
+            continue
+        t = _t_at_length(piece, remaining) if length else 0.0
+        return _eval(piece, t), _angle_at(piece, t)
+    return path.start, 0.0
+
+
+def _seg_length(piece: tuple[Point, ...], steps: int = 32) -> float:
+    if len(piece) == 2:
+        return _dist(*piece)
+    total, prev = 0.0, piece[0]
+    for i in range(1, steps + 1):
+        q = _eval(piece, i / steps)
+        total, prev = total + _dist(prev, q), q
+    return total
+
+
+def _t_at_length(piece: tuple[Point, ...], length: float, steps: int = 32) -> float:
+    if len(piece) == 2:
+        full = _dist(*piece)
+        return length / full if full else 0.0
+    walked, prev = 0.0, piece[0]
+    for i in range(1, steps + 1):
+        q = _eval(piece, i / steps)
+        step = _dist(prev, q)
+        if walked + step >= length:
+            return (i - 1 + ((length - walked) / step if step else 0.0)) / steps
+        walked, prev = walked + step, q
+    return 1.0
+
+
+def _eval(piece: tuple[Point, ...], t: float) -> Point:
+    if len(piece) == 2:
+        (x0, y0), (x1, y1) = piece
+        return x0 + (x1 - x0) * t, y0 + (y1 - y0) * t
+    p0, c1, c2, p1 = piece
+    u = 1 - t
+    return (u ** 3 * p0[0] + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t ** 3 * p1[0],
+            u ** 3 * p0[1] + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t ** 3 * p1[1])
+
+
+def _angle_at(piece: tuple[Point, ...], t: float) -> float:
+    if len(piece) == 2:
+        return math.atan2(piece[1][1] - piece[0][1], piece[1][0] - piece[0][0])
+    return _bezier_angle(*piece, t)  # type: ignore[call-arg]
 
 
 def smooth_spline(

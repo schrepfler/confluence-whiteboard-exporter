@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import itertools
 import logging
 import math
 import re
@@ -226,14 +225,15 @@ def test_connector_routing_follows_its_presentation(presentation, routing) -> No
     edge = _edge(_svg_for(_connector(presentation=presentation)))
     assert f'data-routing="{routing}"' in edge
     d = re.search(r'\sd="([^"]+)"', edge).group(1)
-    assert (" C " in d) == (routing == "curved")
+    assert (" C " in d) == (routing != "straight"), "curves, or right angles with rounded bends"
     if routing == "straight":
         assert len(_segments(d)) == 2
     if routing == "dynamic":
         pts = _segments(d)
-        # Boxes centred on (0, 0) and (300, 200); right-middle to left-middle.
+        # Boxes centred on (0, 0) and (300, 200); right-middle to left-middle,
+        # with rounded bends.
         assert pts[0] == (50, 0) and pts[-1] == (250, 200)
-        assert all(a[0] == b[0] or a[1] == b[1] for a, b in itertools.pairwise(pts)), "right angles only"
+        assert " C " in d
 
 
 def test_shape_outlines_are_three_units_wide_in_every_style() -> None:
@@ -273,3 +273,34 @@ def test_line_ends_scale_with_the_stroke_size() -> None:
     assert 'stroke-width="6"' in _edge(svg)
     assert re.findall(r'<marker id="([^"]+)"', svg) == ["cap-arrow-3"]
     assert "M -16 11.2 L 0 0 L -16 -11.2" in svg, "chevron 10x14, scaled 1.6, tip on the end"
+
+
+def _labelled(**label) -> list[dict]:
+    return [*_connector(presentation=1), {"type": "pathLabel", "sourcePathIndex": 2, "proportion": 0.5,
+                                         "pathOffsetPosition": 0, "text": _adf("Calls"),
+                                         "color": {"x": 23, "y": 43, "z": 77}, **label}]
+
+
+def test_a_connector_label_sits_on_the_line_above_every_connector() -> None:
+    svg = _svg_for(_labelled())
+    group = re.search(r'<g class="wb-label".*?</g>', svg).group(0)
+    assert "Calls" in group and "color:#172B4D" in group
+    # Halfway along the straight line from (50, 0) to (250, 200).
+    assert 'data-x="150" data-y="100"' in group
+    assert svg.index('class="wb-label"') > svg.rindex('class="wb-edge"'), "drawn after the connectors"
+
+
+def test_a_label_of_no_connector_is_reported(caplog) -> None:
+    caplog.set_level(logging.WARNING)
+    _svg_for(_labelled(sourcePathIndex=9))
+    assert "1 pathLabel" in caplog.text
+
+
+def test_a_library_icon_is_a_named_placeholder(caplog) -> None:
+    caplog.set_level(logging.WARNING)
+    svg = _svg_for([{"type": "advanced-icon", "position": {"x": 0, "y": 0}, "size": {"x": 160, "y": 160},
+                     "basisPosition": {"x": 0, "y": 0}, "basisSize": {"x": 100, "y": 100},
+                     "iconId": "Amazon-Simple-Storage-Service", "collection": "aws"}])
+    assert "Amazon Simple Storage Service" in svg
+    assert re.search(r'<rect x="-50" y="-50" width="100" height="100"', svg), "drawn at its basis box, not the stale size"
+    assert "1 library icon(s) drawn as placeholders" in caplog.text

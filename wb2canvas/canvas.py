@@ -104,6 +104,7 @@ def render_canvas(
             fromEnd=_end(e.start_cap, dropped_caps),
             toEnd=_end(e.end_cap, dropped_caps),
             color=e.color.hex if e.color else None,
+            label=" / ".join(lb.markdown for lb in e.labels if lb.markdown) or None,
         ))
     _warn(board, loose, dropped_caps)
     if resolve_collisions:
@@ -135,6 +136,9 @@ def _node(n: Node, box: tuple[float, float, float, float], vault_prefix: str) ->
             return CanvasNode(id=n.id, type="text", x=x, y=y, width=w, height=h, text="*(image not downloaded)*")
         return CanvasNode(id=n.id, type="file", x=x, y=y, width=w, height=h,
                           file=_join(vault_prefix, n.image.href))
+    if n.kind is Kind.ICON:  # its artwork is not available: name it
+        text = f"*{n.icon}*" + (f"\n\n{n.markdown}" if n.markdown else "")
+        return CanvasNode(id=n.id, type="text", x=x, y=y, width=w, height=h, color=_color(n.stroke), text=text)
     if n.kind is Kind.LINE:
         # No line primitive: a thin coloured card stands in for dividers.
         t = max(_MIN_LINE_THICKNESS, int(n.stroke_width * 2))

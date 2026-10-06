@@ -11,7 +11,7 @@ import json
 
 from .adf import _xml_escape
 from .board import Board, Kind
-from .connectors import ELBOW_STUB, TENSION
+from .connectors import BEND_RADIUS, ELBOW_STUB, TENSION
 from .shapes import (
     CORNER_PHASE,
     CORNER_SPAN,
@@ -41,6 +41,7 @@ def render_html(board: Board, shape_map: dict[int, int] | None = None) -> str:
     drawings = {k: cmds for k in sorted(kinds) if (cmds := stretching_commands(k))}
     script = (
         _VIEWER_JS.replace("__ELBOW_STUB__", str(ELBOW_STUB))
+        .replace("__BEND_RADIUS__", str(BEND_RADIUS))
         .replace("__TENSION__", str(TENSION))
         .replace("__SHAPES__", json.dumps(drawings, separators=(",", ":")))
         .replace("__DASH__", json.dumps({
@@ -70,10 +71,12 @@ def render_html(board: Board, shape_map: dict[int, int] | None = None) -> str:
 _VIEWER_JS = r"""
 (function () {
   if (typeof document === 'undefined') return;
-  var TENSION = __TENSION__, STUB = __ELBOW_STUB__;
+  var TENSION = __TENSION__, STUB = __ELBOW_STUB__, BEND_RADIUS = __BEND_RADIUS__;
   var SHAPES = __SHAPES__, DASH = __DASH__;
   var CORNER_COS = Math.cos(10 * Math.PI / 180);
   var SIDE_ANGLE = { right: 0, bottom: Math.PI / 2, left: Math.PI, top: -Math.PI / 2 };
+  var SIDE_DIR = { right: '+x', left: '-x', bottom: '+y', top: '-y' };
+  var OPPOSITE = { '+x': '-x', '-x': '+x', '+y': '-y', '-y': '+y' };
   function init() {
     var svg = document.querySelector('svg');
     if (!svg) return;
@@ -103,10 +106,20 @@ _VIEWER_JS = r"""
         sa: parseAnchor(p.getAttribute('data-sa')),
         ta: parseAnchor(p.getAttribute('data-ta')),
         waypoints: wp,
+        axes: (p.getAttribute('data-axes') || '').split(' ').filter(Boolean).map(function (a) { return a === '-' ? null : a; }),
+        stroke: parseFloat(p.getAttribute('stroke-width')) || 2,
+        labels: [],
         sEnd: { ext: ends[0], hide: !!ends[1] },
         tEnd: { ext: ends[2], hide: !!ends[3] }
       });
     }
+    // Labels ride along their connector at the same proportion of its length.
+    var edgeById = new Map(edgeList.map(function (e) { return [e.path.getAttribute('data-id'), e]; }));
+    svg.querySelectorAll('g.wb-label').forEach(function (g) {
+      var e = edgeById.get(g.getAttribute('data-edge'));
+      if (e) e.labels.push({ group: g, p: parseFloat(g.getAttribute('data-p')),
+                             x: parseFloat(g.getAttribute('data-x')), y: parseFloat(g.getAttribute('data-y')) });
+    });
     autoFit();
     redrawAllEdges();
     enablePanZoom(svg);
@@ -350,9 +363,18 @@ _VIEWER_JS = r"""
       var sb = bounds(nodeMap.get(e.srcIdx));
       var tb = bounds(nodeMap.get(e.tgtIdx));
       if (!sb || !tb) return;
-      var s = { p: [sb.x + sb.w * e.sa.left, sb.y + sb.h * e.sa.top], side: sideOf(e.sa), ext: e.sEnd.ext, hide: e.sEnd.hide };
-      var t = { p: [tb.x + tb.w * e.ta.left, tb.y + tb.h * e.ta.top], side: sideOf(e.ta), ext: e.tEnd.ext, hide: e.tEnd.hide };
-      e.path.setAttribute('d', pathData(route(e.routing, s, t, e.waypoints)));
+      var s = { p: [sb.x + sb.w * e.sa.left, sb.y + sb.h * e.sa.top], side: sideOf(e.sa), ext: e.sEnd.ext, hide: e.sEnd.hide,
+                box: [sb.x, sb.y, sb.w, sb.h] };
+      var t = { p: [tb.x + tb.w * e.ta.left, tb.y + tb.h * e.ta.top], side: sideOf(e.ta), ext: e.tEnd.ext, hide: e.tEnd.hide,
+                box: [tb.x, tb.y, tb.w, tb.h] };
+      e.path.setAttribute('d', pathData(route(e.routing, s, t, e.waypoints, e.axes, e.stroke)));
+      if (e.labels.length) {
+        var total = e.path.getTotalLength();
+        e.labels.forEach(function (lb) {
+          var pt = e.path.getPointAtLength(lb.p * total);
+          lb.group.setAttribute('transform', 'translate(' + (pt.x - lb.x) + ' ' + (pt.y - lb.y) + ')');
+        });
+      }
     }
     function bounds(nd) {
       if (!nd) return null;
@@ -365,28 +387,76 @@ _VIEWER_JS = r"""
       };
     }
     // The connector router: a line-for-line port of connectors.py.
-    function route(routing, s, t, wps) {
+    function route(routing, s, t, wps, axes, stroke) {
       if (routing === 'straight') return lines(trim([s.p].concat(wps, [t.p]), s, t));
-      if (routing === 'dynamic') return dynamic(s, t, wps);
+      if (routing === 'dynamic') return dynamic(s, t, wps, axes || [], stroke || 2);
       return curved(s, t, wps);
     }
     function lines(pts) {
       return { start: pts[0], segs: pts.slice(1).map(function (p) { return [p]; }) };
     }
-    function dynamic(s, t, wps) {
-      var stub = Math.max(STUB, s.ext + 10, t.ext + 10), pts;
-      if (wps.length) {
-        pts = [s.p];
-        var horizontal = outward(s.side, wps[0][0] - s.p[0], wps[0][1] - s.p[1], true)[0] !== 0;
-        wps.concat([t.p]).forEach(function (p) {
-          var a = pts[pts.length - 1];
-          pts.push(horizontal ? [p[0], a[1]] : [a[0], p[1]]);
-          pts.push(p);
-        });
+    function dynamic(s, t, wps, axes, stroke) {
+      var pts;
+      var handles = wps.length && axes.length === wps.length && axes.every(function (a) { return a === 'x' || a === 'y'; });
+      if (handles) {
+        pts = throughHandles(s, t, wps, axes, stroke);
       } else {
-        pts = elbow(s.p, t.p, s.side, t.side, stub);
+        pts = elbow(s.p, t.p, s.side, t.side, Math.max(STUB, s.ext + 10, t.ext + 10));
       }
-      return lines(trim(dropCollinear(pts), s, t));
+      return rounded(trim(dropCollinear(pts), s, t), BEND_RADIUS);
+    }
+    function throughHandles(s, t, wps, axes, stroke) {
+      var margin = 4 * stroke + 10;
+      function edge(box, dir) {
+        return { '+x': box[0] + box[2] + margin, '-x': box[0] - margin, '+y': box[1] + box[3] + margin, '-y': box[1] - margin }[dir];
+      }
+      var sDir = s.box && s.side ? SIDE_DIR[s.side] : null;
+      var tDir = t.box && t.side ? OPPOSITE[SIDE_DIR[t.side]] : null;
+      var xFirst = sDir ? sDir[1] === 'x' : axes[0] === 'x';
+      var vals = xFirst ? [s.p[0], s.p[1]] : [s.p[1], s.p[0]];
+      function misfit(movesX) { return movesX !== ((vals.length % 2 === 0) === xFirst); }
+      if (sDir && misfit(axes[0] === 'x')) vals.push(edge(s.box, sDir));
+      wps.forEach(function (p, k) {
+        if (misfit(axes[k] === 'x')) vals.push(null);
+        vals.push(axes[k] === 'x' ? p[0] : p[1]);
+      });
+      var xLast = !(tDir ? tDir[1] === 'x' : axes[axes.length - 1] === 'x');
+      if (misfit(xLast)) {
+        if (tDir) vals.push(edge(t.box, OPPOSITE[tDir])); else xLast = !xLast;
+      }
+      vals = vals.concat(xLast ? [t.p[0], t.p[1]] : [t.p[1], t.p[0]]);
+      fillGaps(vals, 0); fillGaps(vals, 1);
+      var pts = [s.p];
+      for (var i = 2; i < vals.length; i++) {
+        var prev = vals[i - 1], cur = vals[i];
+        pts.push(((i % 2 === 0) === xFirst) ? [cur, prev] : [prev, cur]);
+      }
+      return pts.filter(function (p, k) { return k === 0 || p[0] !== pts[k - 1][0] || p[1] !== pts[k - 1][1]; });
+    }
+    function fillGaps(vals, parity) {
+      var run = 0, last = 0;
+      for (var i = parity; i < vals.length; i += 2) {
+        var v = vals[i];
+        if (v === null) run++;
+        else if (run) {
+          for (var n = 0; n < run; n++) vals[i - 2 * n - 2] = v + (last - v) * (n + 1) / (run + 1);
+          run = 0;
+        } else last = v;
+      }
+    }
+    function rounded(pts, radius) {
+      var k = 0.5523, segs = [];
+      for (var i = 1; i < pts.length - 1; i++) {
+        var a = pts[i - 1], p = pts[i], b = pts[i + 1];
+        var din = unit(sub(p, a)), dout = unit(sub(b, p));
+        if (Math.abs(din[0] * dout[0] + din[1] * dout[1]) > 0.999) { segs.push([p]); continue; }
+        var r = Math.min(radius, dist(a, p) / 2, dist(p, b) / 2);
+        var pin = sub(p, scale(din, r)), pout = add(p, scale(dout, r));
+        segs.push([pin]);
+        segs.push([add(pin, scale(din, r * k)), sub(pout, scale(dout, r * k)), pout]);
+      }
+      segs.push([pts[pts.length - 1]]);
+      return { start: pts[0], segs: segs };
     }
     function curved(s, t, wps) {
       var pts = [s.p].concat(wps, [t.p]), extended = !!(s.ext || t.ext);

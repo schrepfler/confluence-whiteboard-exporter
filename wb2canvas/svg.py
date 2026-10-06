@@ -14,8 +14,8 @@ import math
 from collections import Counter
 
 from .adf import _xml_escape
-from .board import SVG_METRICS, Board, Box, Edge, Kind, Node, Point, Rgb, anchor_point, anchor_side, layout
-from .connectors import ARROWHEAD_SCALE, ARROWHEADS, End, Route, end_stub, route, thickness
+from .board import SVG_METRICS, Board, Box, Edge, Kind, Label, Node, Point, Rgb, anchor_point, anchor_side, layout
+from .connectors import ARROWHEAD_SCALE, ARROWHEADS, End, Route, end_stub, point_at, route, thickness
 from .shapes import DASH_PERIOD, DASH_SHARE, SHAPE_LINE_WIDTH, Section, dash_layout, drawing, fmt, kind_label, resolve
 
 log = logging.getLogger(__name__)
@@ -24,6 +24,7 @@ DEFAULT_STROKE = "#172B4D"
 EDGE_DEFAULT_STROKE = "#758195"
 MARGIN = 60
 BASE_FONT_PX = 13.0
+LABEL_PADDING = 4.0  # round a connector label's text, as in the editor
 
 
 class _Bounds:
@@ -80,7 +81,12 @@ def svg_document(board: Board, shape_map: dict[int, int] | None = None) -> tuple
             bounds.box(*box)
         if markup := _render_node(node, box, smap):
             node_parts.append(markup)
-    edge_parts = [m for e in board.edges if (m := _render_edge(e, boxes, bounds))]
+    edge_parts: list[str] = []
+    label_parts: list[str] = []  # above every connector, as in the editor
+    for e in board.edges:
+        line, labels = _render_edge(e, boxes, bounds)
+        edge_parts.append(line)
+        label_parts.extend(labels)
     caps = {(c, e.stroke_size) for e in board.edges for c in (e.start_cap, e.end_cap) if c in ARROWHEADS}
 
     if bounds.empty:
@@ -100,6 +106,7 @@ def svg_document(board: Board, shape_map: dict[int, int] | None = None) -> tuple
             _STYLE,
             *node_parts,
             *edge_parts,
+            *label_parts,
             "</svg>",
         ]
     )
@@ -158,6 +165,8 @@ _STYLE = (
     ".node-body li{margin:0;}"
     ".node-body li>p{margin:0;}"
     ".node-body strong{font-weight:600;}"
+    ".wb-label-box{display:flex;align-items:center;justify-content:center;width:100%;height:100%;}"
+    ".wb-label-box>.node-body{background:#FFFFFF;padding:0 4px;line-height:1.35;white-space:nowrap;text-align:center;}"
     "</style>"
 )
 
@@ -179,6 +188,8 @@ def _render_node(node: Node, box: Box, smap: dict[int, int]) -> str:
                 f'<text x="{fmt(x + w / 2)}" y="{fmt(y + h / 2)}" text-anchor="middle" dominant-baseline="middle" '
                 f'font-size="{fmt(min(12.0, h / 3))}" fill="#626F86">image</text>'
             )
+    elif node.kind is Kind.ICON:
+        inner = _icon(node, box)
     elif node.kind is Kind.LINE and len(node.points) == 2:
         (x1, y1), (x2, y2) = node.points
         width = thickness(int(node.stroke_width))
@@ -248,6 +259,35 @@ def _section(index: int, sec: Section, colours: dict[str, str], style: str) -> s
     return "".join(paths)
 
 
+def _fraction(v: float) -> str:
+    """An anchor's fraction of its box. Unlike a coordinate it needs more
+    than one decimal: 0.0388 of a 550-high box is 21 units off the corner."""
+    return f"{round(v, 5):g}"
+
+
+def _icon(node: Node, box: Box) -> str:
+    """A library icon whose artwork is not available: a rounded square
+    naming the icon, with the element's own label below."""
+    x, y, w, h = box
+    colour = _hex(node.stroke, DEFAULT_STROKE)
+    out = (
+        f'<rect x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}" rx="{fmt(min(w, h) * 0.15)}" '
+        f'fill="#F7F8F9" stroke="{colour}" stroke-width="1.5" stroke-dasharray="4,3"/>'
+        f'<foreignObject x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}">'
+        f'<div xmlns="http://www.w3.org/1999/xhtml" class="node-text" style="font-size:10px;color:#626F86;'
+        f'text-align:center"><div class="node-body va-middle">{_xml_escape(node.icon or "icon")}</div></div>'
+        "</foreignObject>"
+    )
+    if node.html:
+        out += (
+            f'<foreignObject x="{fmt(x - w / 2)}" y="{fmt(y + h)}" width="{fmt(2 * w)}" height="{fmt(SVG_METRICS.line_h * 2)}" '
+            f'style="overflow:visible"><div xmlns="http://www.w3.org/1999/xhtml" class="node-text node-free" '
+            f'style="text-align:center;font-size:{_font_px(node)}px"><div class="node-body">{node.html}</div></div>'
+            "</foreignObject>"
+        )
+    return out
+
+
 def _free_text(node: Node, box: Box) -> str:
     """Coloured text with no outline that is never clipped: in the source
     free text sizes itself to its content."""
@@ -265,18 +305,22 @@ def _free_text(node: Node, box: Box) -> str:
     )
 
 
-def _render_edge(edge: Edge, boxes: dict[str, Box], bounds: _Bounds) -> str:
+def _render_edge(edge: Edge, boxes: dict[str, Box], bounds: _Bounds) -> tuple[str, list[str]]:
+    """The connector's path, and its labels."""
     # The recorded start/end are computed from a stale element size, so they
     # are only a fallback for an end that is not attached to an element.
     src = anchor_point(boxes[edge.source], edge.source_anchor) if edge.source else edge.start
     tgt = anchor_point(boxes[edge.target], edge.target_anchor) if edge.target else edge.end
     if src is None or tgt is None:
-        return ""
-    start = End(src, anchor_side(edge.source_anchor) if edge.source else None, edge.start_cap)
-    end = End(tgt, anchor_side(edge.target_anchor) if edge.target else None, edge.end_cap)
-    path = route(edge.routing, start, end, edge.waypoints, edge.stroke_size)
+        return "", []
+    start = End(src, anchor_side(edge.source_anchor) if edge.source else None, edge.start_cap,
+                boxes[edge.source] if edge.source else None)
+    end = End(tgt, anchor_side(edge.target_anchor) if edge.target else None, edge.end_cap,
+              boxes[edge.target] if edge.target else None)
+    path = route(edge.routing, start, end, edge.waypoints, edge.stroke_size, edge.waypoint_axes)
     for p in path.points():
         bounds.point(*p)
+    labels = [_render_label(edge, label, path, bounds) for label in edge.labels]
 
     sa, ta = edge.source_anchor, edge.target_anchor
     markers = "".join(
@@ -287,12 +331,40 @@ def _render_edge(edge: Edge, boxes: dict[str, Box], bounds: _Bounds) -> str:
     (s_ext, s_hide), (t_ext, t_hide) = end_stub(edge.start_cap, edge.stroke_size), end_stub(edge.end_cap, edge.stroke_size)
     stroke = _stroke(edge.stroke_style, _hex(edge.color, EDGE_DEFAULT_STROKE), thickness(edge.stroke_size))
     return (
-        f'<path class="wb-edge" data-src="{_xml_escape(edge.source or "")}" '
+        f'<path class="wb-edge" data-id="{_xml_escape(edge.id)}" data-src="{_xml_escape(edge.source or "")}" '
         f'data-tgt="{_xml_escape(edge.target or "")}" '
-        f'data-sa="{fmt(sa[0])},{fmt(sa[1])}" data-ta="{fmt(ta[0])},{fmt(ta[1])}" '
+        f'data-sa="{_fraction(sa[0])},{_fraction(sa[1])}" data-ta="{_fraction(ta[0])},{_fraction(ta[1])}" '
         f'data-routing="{edge.routing}" data-wp="{" ".join(f"{fmt(x)},{fmt(y)}" for x, y in edge.waypoints)}" '
+        f'data-axes="{" ".join(a or "-" for a in edge.waypoint_axes)}" '
         f'data-ends="{fmt(s_ext)},{int(s_hide)},{fmt(t_ext)},{int(t_hide)}" '
         f'd="{path_data(path)}" fill="none" {stroke}{markers}/>'
+    ), labels
+
+
+def _render_label(edge: Edge, label: Label, path: Route, bounds: _Bounds) -> str:
+    """Text on the line, on a background that hides the line behind it, or
+    beside the line for a "left"/"right" label."""
+    (px, py), angle = point_at(path, label.proportion)
+    on_path = px, py  # what the viewer re-finds when the connector moves
+    lines = [ln for ln in label.markdown.splitlines() if ln.strip()] or [" "]
+    m = SVG_METRICS.scaled(label.font_scale)
+    w = max(len(ln) for ln in lines) * m.char_w + 2 * LABEL_PADDING
+    h = len(lines) * m.line_h + 2 * LABEL_PADDING
+    if label.side != "centre":
+        # The editor puts "left" below a rightward line and "right" above it
+        # (screen coordinates run downward).
+        d = (h / 2 + LABEL_PADDING) * (1 if label.side == "left" else -1)
+        px, py = px - math.sin(angle) * d, py + math.cos(angle) * d
+    x, y = px - w / 2, py - h / 2
+    bounds.box(x, y, w, h)
+    colour = _hex(label.color, DEFAULT_STROKE)
+    return (
+        f'<g class="wb-label" data-edge="{_xml_escape(edge.id)}" data-p="{_fraction(label.proportion)}" '
+        f'data-x="{fmt(on_path[0])}" data-y="{fmt(on_path[1])}">'
+        f'<foreignObject x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}" style="overflow:visible">'
+        f'<div xmlns="http://www.w3.org/1999/xhtml" class="wb-label-box">'
+        f'<div class="node-body" style="color:{colour};font-size:{fmt(BASE_FONT_PX * label.font_scale)}px">'
+        f"{label.html}</div></div></foreignObject></g>"
     )
 
 
