@@ -105,3 +105,18 @@ def test_drawn_outlines_are_dashed_per_run_centred_on_dashes() -> None:
 def test_a_run_shorter_than_a_period_is_solid() -> None:
     stroke, sub = _outline(0, 30, 20)
     assert dash_layout(sub, 3.0, stroke.dash_mode) == ([], 0.0)
+
+
+@pytest.mark.parametrize(("kind", "text"), [
+    # The editor's content boxes for its basic shapes, in a 200x100 box at 0,0.
+    (0, (0, 0, 200, 100)),  # sharp rectangle: the whole box
+    (1, (1.44, 1.44, 197.12, 97.12)),  # rectangle: less its 144 x 0.02 corner
+    (3, (16.2, 16.2, 167.6, 67.6)),  # rounded rectangle: less its 144 x 0.225 corner
+    (2, (100 - 100 / math.sqrt(2), 50 - 50 / math.sqrt(2), 200 / math.sqrt(2), 100 / math.sqrt(2))),  # ellipse
+    (4, (50, 25, 100, 50)),  # diamond: half the box
+    (5, (50, 50, 100, 50)),  # triangle: half the box, a quarter-height towards the base
+    (6, (50, 0, 100, 50)),  # upside-down triangle
+    (7, (50, 0, 100, 100)),  # parallelograms: half the width
+])
+def test_basic_shapes_put_text_in_the_editors_content_box(kind: int, text: tuple[float, ...]) -> None:
+    assert drawing(kind, 0, 0, 200, 100).text == pytest.approx(text)

@@ -160,10 +160,35 @@ def test_shapes_are_centred_on_position_and_grown_from_their_basis_box() -> None
     # "Sources" on a sample board: its text grew it from 110.3
     # to 188.5 high, top edge fixed; the stored 160x160 size is stale.
     board = _clip({"type": "shape", "position": {"x": -1127.8, "y": -824.5}, "size": {"x": 160, "y": 160},
-                   "basisPosition": {"x": -1127.8, "y": -863.6}, "basisSize": {"x": 221.9, "y": 110.3}})
+                   "basisPosition": {"x": -1127.8, "y": -863.6}, "basisSize": {"x": 221.9, "y": 110.3},
+                   "text": _text("Sources")})
     x, y, w, h = node_box(board.nodes[0], CANVAS_METRICS)
     assert (x, w) == pytest.approx((-1127.8 - 221.9 / 2, 221.9))
     assert (y, h) == pytest.approx((-863.6 - 110.3 / 2, 188.5))
+
+
+@pytest.mark.parametrize("text", [None, '{"version":1,"type":"doc","content":[]}',
+                                  '{"type":"doc","content":[{"type":"paragraph","content":[]}]}'])
+def test_a_shape_without_text_is_drawn_at_its_basis_box(text: str | None) -> None:
+    # The editor only grows a shape to fit its text; an empty shape keeps its
+    # basis box whatever its (then stale) position says. Sample values: the
+    # empty outline on Sample Board 2.
+    board = _clip({"type": "shape", "shape": 3, "position": {"x": 229.6, "y": -180.5}, "text": text,
+                   "basisPosition": {"x": 52.7, "y": -136.7}, "basisSize": {"x": 332.2, "y": 548.9}})
+    n = board.nodes[0]
+    assert (n.x, n.y, n.w, n.h) == pytest.approx((52.7 - 166.1, -136.7 - 274.45, 332.2, 548.9))
+
+
+@pytest.mark.parametrize(("dx", "dy"), [(0.0, -19.7), (-15.4, 0.0)])
+def test_a_shape_only_grows_downward_to_fit_its_text(dx: float, dy: float) -> None:
+    # The editor's shapes have a fixed width and grow downward; a position
+    # shifted up or sideways is stale. Sample values: "Service C"
+    # on Sample Board 4, and a box on Sample Board 5.
+    board = _clip({"type": "shape", "shape": 1, "text": _text("Service C"),
+                   "position": {"x": 400 + dx, "y": 223.1 + dy},
+                   "basisPosition": {"x": 400, "y": 223.1}, "basisSize": {"x": 320.6, "y": 716.5}})
+    n = board.nodes[0]
+    assert (n.x, n.y, n.w, n.h) == pytest.approx((400 - 160.3, 223.1 - 358.25, 320.6, 716.5))
 
 
 def test_images_are_centred_on_position() -> None:

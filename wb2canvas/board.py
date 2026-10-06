@@ -305,7 +305,7 @@ def _attach_waypoints(edges: dict[Any, Edge], bends: dict[Any, list[tuple[float,
 
 def _clip_node(nid: str, e: ClipboardElement, media: dict[str, str], losses: _Losses) -> Node | None:
     if e.type == "shape" and e.position:
-        x, y, w, h = _drawn_box(e)
+        x, y, w, h = _shape_box(e)
         return Node(
             id=nid,
             kind=Kind.SHAPE,
@@ -398,9 +398,23 @@ def _image(file_id: str, media: dict[str, str], losses: _Losses) -> Image:
 
 
 def _drawn_box(e: ClipboardElement) -> Box:
-    """The box the editor draws a shape or text element in."""
+    """The box the editor draws a text element or icon in."""
     assert e.position is not None
     return _grown_box(_xy(e.position), _xy(e.size), _xy(e.basisPosition), _xy(e.basisSize))
+
+
+def _shape_box(e: ClipboardElement) -> Box:
+    """The box the editor draws a shape in. A shape keeps its basis width
+    and grows only downward, to fit its text, so `position` (the centre
+    after the last growth) counts only when it moved down; a shift up or
+    sideways is stale. The editor does not measure an empty shape at all."""
+    assert e.position is not None
+    basis_centre, basis_size = _xy(e.basisPosition), _xy(e.basisSize)
+    if basis_centre is None or not basis_size or basis_size[0] <= 0 or basis_size[1] <= 0:
+        return _drawn_box(e)
+    (bx, by), (bw, bh) = basis_centre, basis_size
+    grow = 2 * (e.position.y - by) if adf_to_markdown(e.text).strip() else 0.0
+    return bx - bw / 2, by - bh / 2, bw, bh + max(grow, 0.0)
 
 
 def _grown_box(centre: Point, size: Point | None, basis_centre: Point | None, basis_size: Point | None) -> Box:
@@ -581,8 +595,8 @@ class TextMetrics:
 
 # Obsidian canvas cards render ~16px text with generous card padding.
 CANVAS_METRICS = TextMetrics(char_w=7.5, line_h=22.0, pad_w=32.0, pad_h=36.0, para_gap=0.5)
-# The SVG renders 13px system text at line-height 1.35 with 8/12px padding.
-SVG_METRICS = TextMetrics(char_w=6.6, line_h=17.6, pad_w=24.0, pad_h=16.0, para_gap=0.15)
+# The SVG renders the editor's 15.5px text on a 22px line with 12px padding.
+SVG_METRICS = TextMetrics(char_w=7.85, line_h=22.0, pad_w=24.0, pad_h=24.0, para_gap=0.15)
 
 
 def node_box(node: Node, metrics: TextMetrics) -> Box:

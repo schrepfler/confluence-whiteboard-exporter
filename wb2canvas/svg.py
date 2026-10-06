@@ -24,7 +24,14 @@ log = logging.getLogger(__name__)
 DEFAULT_STROKE = drawn("#172B4D")  # the editor's default text and outline colour
 EDGE_DEFAULT_STROKE = drawn("#758195")
 MARGIN = 60
-BASE_FONT_PX = 13.0
+# The editor's whiteboard text spacing: paragraphs at 11.6/.75 px on a 22 px
+# line; headings at their own sizes (font size, line height in px).
+BASE_FONT_PX = 11.6 / 0.75
+LINE_HEIGHT = 22 / BASE_FONT_PX
+TEXT_PADDING = 12.0  # round a shape's text, inside its content box; grows with the font scale
+HEADINGS = {1: (27, 32), 2: (23, 27), 3: (18, 23), 4: (16, 23), 5: (14, 18), 6: (13, 18)}
+FONT_FAMILY = ('"Atlassian Sans", ui-sans-serif, -apple-system, BlinkMacSystemFont, '
+               '"Segoe UI", Ubuntu, "Helvetica Neue", sans-serif')  # the editor's stack
 LABEL_PADDING = 4.0  # round a connector label's text, as in the editor
 
 
@@ -101,7 +108,7 @@ def svg_document(board: Board, shape_map: dict[int, int] | None = None) -> tuple
         [
             f'<svg xmlns="http://www.w3.org/2000/svg" '
             f'viewBox="{vb_x} {vb_y} {vb_w} {vb_h}" width="{vb_w}" height="{vb_h}" '
-            f'font-family="-apple-system, BlinkMacSystemFont, \'Segoe UI\', sans-serif" '
+            f"font-family='{FONT_FAMILY}' "
             f'font-size="{fmt(BASE_FONT_PX)}">',
             _defs(caps),
             _STYLE,
@@ -153,21 +160,25 @@ def _marker(name: str, stroke_size: int) -> str:
 # content overflows, so overflow always grows downward and stays measurable.
 _STYLE = (
     "<style>"
-    ".node-text{display:flex;flex-direction:column;margin:0;padding:8px 12px;"
-    f"color:{DEFAULT_STROKE};line-height:1.35;height:100%;width:100%;"
+    f".node-text{{display:flex;flex-direction:column;margin:0;padding:{fmt(TEXT_PADDING)}px;"
+    f"color:{DEFAULT_STROKE};line-height:{LINE_HEIGHT:.4f};height:100%;width:100%;"
     "box-sizing:border-box;overflow:hidden;}"
     ".node-free{display:block;height:auto;width:auto;padding:0;overflow:visible;}"
     ".node-body{margin:0;overflow-wrap:anywhere;}"
     ".va-top{margin-bottom:auto;}"
     ".va-middle{margin-top:auto;margin-bottom:auto;}"
     ".va-bottom{margin-top:auto;}"
-    ".node-body p{margin:0 0 2px 0;}"
-    ".node-body ul,.node-body ol{margin:1px 0 1px 18px;padding:0;text-align:left;}"
+    # No space between paragraphs or round lists: the editor sizes a box as
+    # whole 22px lines plus padding.
+    ".node-body p{margin:0;}"
+    ".node-body ul,.node-body ol{margin:0 0 0 18px;padding:0;text-align:left;}"
     ".node-body li{margin:0;}"
     ".node-body li>p{margin:0;}"
     ".node-body strong{font-weight:600;}"
-    ".wb-label-box{display:flex;align-items:center;justify-content:center;width:100%;height:100%;}"
-    ".wb-label-box>.node-body{background:#FFFFFF;padding:0 4px;line-height:1.35;white-space:nowrap;text-align:center;}"
+    + "".join(f".node-body h{n}{{font-size:{size / BASE_FONT_PX:.4f}em;line-height:{line / size:.4f};margin:0;font-weight:600;}}"
+              for n, (size, line) in HEADINGS.items())
+    + ".wb-label-box{display:flex;align-items:center;justify-content:center;width:100%;height:100%;}"
+    f".wb-label-box>.node-body{{background:#FFFFFF;padding:0 4px;line-height:{LINE_HEIGHT:.4f};white-space:nowrap;text-align:center;}}"
     "</style>"
 )
 
@@ -230,7 +241,7 @@ def _shape(node: Node, box: Box, smap: dict[int, int]) -> str:
     return markup + (
         f'<foreignObject x="{fmt(tx)}" y="{fmt(ty)}" width="{fmt(tw)}" height="{fmt(th)}">'
         f'<div xmlns="http://www.w3.org/1999/xhtml" class="node-text" '
-        f'style="text-align:{node.align};font-size:{_font_px(node)}px">'
+        f'style="text-align:{node.align};font-size:{_font_px(node)}px{_padding(node)}">'
         f'<div class="node-body va-{node.valign}">{node.html}</div></div>'
         "</foreignObject>"
     )
@@ -407,3 +418,7 @@ def _hex(c: Rgb | None, default: str) -> str:
 
 def _font_px(node: Node) -> str:
     return fmt(BASE_FONT_PX * node.font_scale)
+
+
+def _padding(node: Node) -> str:
+    return "" if node.font_scale == 1 else f";padding:{fmt(TEXT_PADDING * node.font_scale)}px"

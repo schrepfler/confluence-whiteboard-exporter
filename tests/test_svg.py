@@ -172,7 +172,7 @@ def test_connector_lands_on_the_drawn_basis_box_edge() -> None:
     # Confluence draws shapes at basisPosition/basisSize, not position/size.
     svg = _svg_for([
         {"type": "shape", "shape": 3, "position": {"x": 0, "y": 50}, "size": {"x": 160, "y": 160},
-         "basisPosition": {"x": 0, "y": 20}, "basisSize": {"x": 298, "y": 144}},
+         "basisPosition": {"x": 0, "y": 20}, "basisSize": {"x": 298, "y": 144}, "text": _adf("Service E")},
         {"type": "shape", "shape": 3, "position": {"x": 900, "y": 0}, "size": {"x": 160, "y": 160}},
         {"type": "connector", "sourceIndex": 0, "targetIndex": 1,
          "sourceAnchor": {"left": 1, "top": 0.5}, "targetAnchor": {"left": 0, "top": 0.5}},
@@ -304,3 +304,12 @@ def test_a_library_icon_is_a_named_placeholder(caplog) -> None:
     assert "Amazon Simple Storage Service" in svg
     assert re.search(r'<rect x="-50" y="-50" width="100" height="100"', svg), "drawn at its basis box, not the stale size"
     assert "1 library icon(s) drawn as placeholders" in caplog.text
+
+
+def test_text_uses_the_editors_type_and_spacing() -> None:
+    # The editor's whiteboard paragraphs: 11.6/.75 px on a 22 px line, in
+    # Atlassian Sans; an h1 is 27 px on a 32 px line.
+    svg = dump_to_svg(_dump())
+    assert 'font-size="15.5"' in svg and '"Atlassian Sans", ui-sans-serif' in svg
+    assert f"line-height:{22 / (11.6 / 0.75):.4f}" in svg
+    assert f".node-body h1{{font-size:{27 / (11.6 / 0.75):.4f}em;line-height:{32 / 27:.4f}" in svg

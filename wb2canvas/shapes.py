@@ -165,6 +165,8 @@ def drawing(kind: int | None, x: float, y: float, w: float, h: float, shape_map:
     elif spec.get("exterior_text") == "+y" and "aspect" in spec:  # label below the graphic
         gh = graphic[3]
         text = (x, y + gh, w, max(h - gh, 24.0))
+    elif (content := _content_box(spec["key"], *graphic)) is not None:
+        text = content
     elif spec.get("text"):
         (left, top), (right, bottom) = (_point(p, *graphic) for p in spec["text"])
         text = (left, top, right - left, bottom - top)
@@ -172,6 +174,36 @@ def drawing(kind: int | None, x: float, y: float, w: float, h: float, shape_map:
     if spec.get("icon"):
         return Drawing(k, sections(PLACEHOLDER_KIND, *graphic), graphic, text, placeholder=True)
     return Drawing(k, sections(k, *graphic), graphic, text)
+
+
+# The editor's basic shapes keep their text in a content box of their own
+# (getConverterForShape) rather than their drawing's text area: rounded
+# polygons lose their corner length, 144 x roundedness, overall; the others
+# keep a fixed share of the box. Text is then padded inside it.
+CORNER_PER_ROUNDEDNESS = 144
+_ROUNDEDNESS = {"rectangle": 0.02, "rounded-rectangle": 0.225}
+_CONTENT_SHARE = {  # key: (width share, height share, shift down as a share of the height)
+    "ellipse": (1 / math.sqrt(2), 1 / math.sqrt(2), 0.0),
+    "diamond": (0.5, 0.5, 0.0),
+    "triangle": (0.5, 0.5, 0.25),  # towards the base
+    "upside-down-triangle": (0.5, 0.5, -0.25),
+    "left-parallelogram": (0.5, 1.0, 0.0),
+    "right-parallelogram": (0.5, 1.0, 0.0),
+}
+
+
+def _content_box(key: str, x: float, y: float, w: float, h: float) -> Box | None:
+    """Where the editor puts a basic shape's text; None for the others."""
+    if key in _ROUNDEDNESS:
+        corner = CORNER_PER_ROUNDEDNESS * _ROUNDEDNESS[key]
+        cw, ch, shift = w - corner, h - corner, 0.0
+    elif key in _CONTENT_SHARE:
+        sw, sh, down = _CONTENT_SHARE[key]
+        cw, ch, shift = w * sw, h * sh, h * down
+    else:
+        return None
+    cw, ch = max(cw, 0.0), max(ch, 0.0)
+    return (x + (w - cw) / 2, y + (h - ch) / 2 + shift, cw, ch)
 
 
 def sections(kind: int, x: float, y: float, w: float, h: float) -> tuple[Section, ...]:
