@@ -9,7 +9,15 @@ from html import escape
 
 from confluence_whiteboard_exporter.board import CAPS, from_dump
 from confluence_whiteboard_exporter.model import ClipboardElement, DumpFile
-from confluence_whiteboard_exporter.reference import CELL_H, CELL_W, COLUMNS, clipboard_html, payload, spec, spec_hash
+from confluence_whiteboard_exporter.reference import (
+    CELL_H,
+    CELL_W,
+    COLUMNS,
+    clipboard_html,
+    payload,
+    spec,
+    spec_hash,
+)
 from confluence_whiteboard_exporter.shapes import KIND_NAMES
 from confluence_whiteboard_exporter.svg import render_svg
 

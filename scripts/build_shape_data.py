@@ -1,4 +1,4 @@
-"""Build confluence_whiteboard_exporter/shape_data.json from a dump made by scripts/dump_shapes.js.
+"""Build the package's shape_data.json from a dump made by scripts/dump_shapes.js.
 
     pbpaste | uv run scripts/build_shape_data.py
 

@@ -4,7 +4,16 @@ import math
 
 import pytest
 
-from confluence_whiteboard_exporter.connectors import ARROWHEADS, TENSION, End, _through_handles, end_stub, point_at, route, smooth_spline
+from confluence_whiteboard_exporter.connectors import (
+    ARROWHEADS,
+    TENSION,
+    End,
+    _through_handles,
+    end_stub,
+    point_at,
+    route,
+    smooth_spline,
+)
 
 
 def _last(r) -> tuple[float, float]:

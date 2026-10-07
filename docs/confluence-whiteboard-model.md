@@ -72,9 +72,9 @@ drawn box is the basis box made `2 × (position.y − basisPosition.y)` taller
 when that is positive: a shape with basis height 110 whose centre sits 40
 below the basis centre is drawn 190 high. A `position` shifted up or
 sideways is stale and ignored (a container whose centre sits 20 above its
-basis centre is drawn at its basis box), and so is any shift of a shape
-with no text, which the editor never measures (`isContentEmpty`). Left-aligned free text grows
-rightward from its left edge, so a column of labels shares
+basis centre is drawn at its basis box), and so is any shift of a shape with
+no text, which the editor never measures (`isContentEmpty`). Left-aligned
+free text grows rightward from its left edge, so a column of labels shares
 `basisPosition.x − basisSize.x / 2`.
 
 Where no growth is stored (pasted elements, boards made by tools), the
@@ -103,13 +103,15 @@ the box), and a database too short for one line grows both ways.
   larger counts, as CSS margins collapse, and all of it scales with the
   font scale (e.g. h1 then a paragraph: 32 + 6 + 22 = 60).
 - **Widths and line breaks.** Text is set by the editor's own text engine
-  (`CanvasContentLayoutManager`), not the browser. `confluence_whiteboard_exporter/text_metrics.json`
-  holds each character's width as that engine sets it, per style, measured
-  by `confluence-whiteboard-exporter reference metrics`. A line holds a word only if the space
-  after it fits too; a line may break after a hyphen; a word wider than the
-  line breaks anywhere. The space where a line wraps stays on the line and
-  counts when it is aligned, so a wrapped right-aligned line ends a space
-  short of the edge (CSS `white-space: break-spaces`).
+  (`CanvasContentLayoutManager`), not the browser.
+  `confluence_whiteboard_exporter/text_metrics.json` holds each character's
+  width as that engine sets it, per style, measured by
+  `confluence-whiteboard-exporter reference metrics`. A line holds a word
+  only if the space after it fits too; a line may break after a hyphen; a
+  word wider than the line breaks anywhere. The space where a line wraps
+  stays on the line and counts when it is aligned, so a wrapped
+  right-aligned line ends a space short of the edge (CSS `white-space:
+  break-spaces`).
 - **Baselines.** The engine puts the baseline where CSS does, half the
   leading plus the ascent into the line (16.63 into a 22 px line).
 - **Free text** is padded 8 on each side, not scaled with the font;
@@ -130,15 +132,17 @@ its text exactly, and the editor's line breaks are reproduced.
 
 Boards store colours as RGB values of the legacy Atlassian palette. The
 editor looks each one up by palette name (`elementColorMap`) and paints it
-with that name's design token in the current theme (`allColorMapTokenNames`),
-so stored `#172B4D` (text, `color.text`) is drawn `#292A2E`, the grey fill
-`#B3B9C4` (`n400`) `#B7B9BE`, and connector grey `#758195` (`n600`)
-`#7D818A` in the 2025 light theme. `confluence_whiteboard_exporter/palette.json` holds the
-resolved table; `scripts/dump_palette.js` and `scripts/build_palette.py`
-regenerate it from a live board.
+with that name's design token in the current theme
+(`allColorMapTokenNames`), so stored `#172B4D` (text, `color.text`) is drawn
+`#292A2E`, the grey fill `#B3B9C4` (`n400`) `#B7B9BE`, and connector grey
+`#758195` (`n600`) `#7D818A` in the 2025 light theme.
+`confluence_whiteboard_exporter/palette.json` holds the resolved table;
+`scripts/dump_palette.js` and `scripts/build_palette.py` regenerate it from
+a live board.
 
-The stored `size` of these elements is stale: every shape examined stores 160×160. Images, by contrast, are drawn at `position`/`size`,
-centred. Freehand `path` elements store absolute `start`/`end` points.
+The stored `size` of these elements is stale: every shape examined stores
+160×160. Images, by contrast, are drawn at `position`/`size`, centred.
+Freehand `path` elements store absolute `start`/`end` points.
 
 A connector's clipboard `start`/`end` are computed from that stale `size`
 (centre ± 80), so they are only useful for an end attached to nothing.
@@ -184,10 +188,11 @@ Each element type declares which box it uses
 | slide types | YSlide, YSlideChildElement, YSlideDecorationElement, YSlideChartElement | Presentation mode | ❌ |
 | `timer`, `timerV2`, voting session, `flags` | YTimer, YVotingSession, … | Collaboration tools | ❌ |
 
-Elements marked ❌ are omitted from exports, and `confluence-whiteboard-exporter` logs a warning
-counting how many of each were omitted, so nothing disappears silently. For
-most of them the clipboard field layout has not been observed yet; supporting
-one needs a sample board containing it.
+Elements marked ❌ are omitted from exports, and
+`confluence-whiteboard-exporter` logs a warning counting how many of each
+were omitted, so nothing disappears silently. For most of them the clipboard
+field layout has not been observed yet; supporting one needs a sample board
+containing it.
 
 A waypoint names its connector by `sourcePathIndex` (the connector's index in
 the clipboard array; in the Yjs document, `pi` is the connector's id). `order`
@@ -287,7 +292,8 @@ How a kind is drawn depends on its renderer:
 **Outlines** are always 3 units wide, whatever the shape's stroke size.
 Shapes are solid or dashed: the editor draws `strokeStyle` 2 dashed and
 anything else solid, "none" (0) and "dotted" (3) included. A dash pattern
-repeats every 12 line widths, so 36 units. The editor lays it out per renderer:
+repeats every 12 line widths, so 36 units. The editor lays it out per
+renderer:
 
 | Kinds | Dash layout |
 |---|---|
@@ -300,17 +306,20 @@ drawn shapes use a 50% dash plus round ends. On a dashed rounded rectangle
 this places the dashes within about 2 units of the live board's.
 
 Icons, the architecture set of the `advanced` category, are drawn at a fixed
-aspect ratio at the top of their box, with the label below (`exteriorTextArea`).
-Section colours are the shape's fill and line colours. A section may swap them:
-the UML start node, for example, is a dot filled with the line colour.
+aspect ratio at the top of their box, with the label below
+(`exteriorTextArea`). Section colours are the shape's fill and line colours.
+A section may swap them: the UML start node, for example, is a dot filled
+with the line colour.
 
-`confluence-whiteboard-exporter` draws every kind from these definitions, stored in
-`confluence_whiteboard_exporter/shape_data.json`. Icon artwork is Atlassian's and is not
-included, so icons are drawn as placeholders with their label below, and a
-warning names them. To refresh the data after an editor update:
+`confluence-whiteboard-exporter` draws every kind from these definitions,
+stored in `confluence_whiteboard_exporter/shape_data.json`. Icon artwork is
+Atlassian's and is not included, so icons are drawn as placeholders with
+their label below, and a warning names them. To refresh the data after an
+editor update:
 
-1. Paste `scripts/dump_shapes.js` into the DevTools console of an open whiteboard.
-   It reads the module the page has already loaded and copies a JSON dump.
+1. Paste `scripts/dump_shapes.js` into the DevTools console of an open
+   whiteboard. It reads the module the page has already loaded and copies a
+   JSON dump.
 2. Run `pbpaste | uv run scripts/build_shape_data.py`.
 
 Atlassian's own SVG exporter does not use these drawings. It approximates a
@@ -427,7 +436,8 @@ Use `--shape-map` to draw a kind as another, by number or key, e.g.
 ### Connector routing
 
 The editor routes connectors itself; nothing about the drawn path is stored
-except the waypoints. `confluence-whiteboard-exporter` reimplements its router:
+except the waypoints. `confluence-whiteboard-exporter` reimplements its
+router:
 
 - **Ends.** Each end sits on its element's drawn box at the anchor
   (`left`/`top` fractions). Its direction is the box side the anchor is on,
@@ -437,7 +447,8 @@ except the waypoints. `confluence-whiteboard-exporter` reimplements its router:
   `[start, waypoints…, end]`:
   - Each waypoint's tangent bisects the directions to its neighbours.
   - Handles are `0.38 ×` the distance to the neighbour; the factor was 0.3
-    before the editor's `contentWrapperMainToolbarRefresh` flag, now always on.
+    before the editor's `contentWrapperMainToolbarRefresh` flag, now always
+    on.
   - End handles follow the end directions.
   - An end with no direction on a two-point curve leaves at angle
     `w + 0.68 · sin(2w − π)`, where `w` is the start-to-end angle.
@@ -485,10 +496,10 @@ straight stub. Where the line is "hidden", that stub is not drawn and the
 graphic covers it.
 
 Atlassian's own SVG exporter ignores all of this: it draws only `arrow`, as
-a filled triangle. JSON Canvas has only `arrow` and `none`, so `confluence-whiteboard-exporter`
-maps the three arrowheads to `arrow` and drops the others with a warning.
-JSON Canvas edges are drawn by the viewer (Obsidian curves them), so routing
-and waypoints are lost there too.
+a filled triangle. JSON Canvas has only `arrow` and `none`, so
+`confluence-whiteboard-exporter` maps the three arrowheads to `arrow` and
+drops the others with a warning. JSON Canvas edges are drawn by the viewer
+(Obsidian curves them), so routing and waypoints are lost there too.
 
 ## Text enums
 
@@ -501,8 +512,8 @@ and waypoints are lost there too.
 
 ## Other enums
 
-- **fileStatus (`fs`)**: 0 pending · 1 uploading · 2 downloading · 3 upload error ·
-  4 download error · 5 ready · 6 local only.
+- **fileStatus (`fs`)**: 0 pending · 1 uploading · 2 downloading · 3 upload
+  error · 4 download error · 5 ready · 6 local only.
 
 ## Feature flags that change geometry
 
@@ -519,7 +530,8 @@ top-left box `(x, y, w, h)`.
 
 - **Rounded rectangle:** corner radius `0.1 × w` (the editor's own drawing
   uses a fixed 35.2; see "How the editor draws shapes").
-- **Triangle:** apex at top centre; the upside-down variant has its apex at bottom centre.
+- **Triangle:** apex at top centre; the upside-down variant has its apex at
+  bottom centre.
 - **Diamond:** the four edge midpoints.
 - **Parallelograms:** the top edge spans the box. The bottom edge is shifted
   by `k × h` with `k = −0.2` (right, leaning `/`) or `+0.2` (left, leaning

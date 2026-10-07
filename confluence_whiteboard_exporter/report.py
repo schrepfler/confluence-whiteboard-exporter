@@ -3,12 +3,12 @@ draws it, beside our export of it (see docs/plan.md).
 
 Our side is the spec exported to SVG as a user's board would be, rendered
 at one pixel per board unit and cropped to each cell. The editor's side is
-the image `confluence-whiteboard-exporter reference snapshot` took of the live canvas. Pass or
-fail comes from the geometry (confluence_whiteboard_exporter/compare.py); the pixels are for
-people: a score, the share of drawn pixels that differ, and an overlay
-marking them, so a difference can be seen before it is measured. Cells we
-draw as placeholders on purpose (icon artwork we do not have) are marked
-known rather than warned about.
+the image `confluence-whiteboard-exporter reference snapshot` took of the
+live canvas. Pass or fail comes from the geometry (compare.py); the pixels
+are for people: a score, the share of drawn pixels that differ, and an
+overlay marking them, so a difference can be seen before it is measured.
+Cells we draw as placeholders on purpose (icon artwork we do not have) are
+marked known rather than warned about.
 """
 
 from __future__ import annotations

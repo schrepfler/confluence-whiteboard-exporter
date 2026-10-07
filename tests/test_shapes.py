@@ -4,7 +4,17 @@ import math
 
 import pytest
 
-from confluence_whiteboard_exporter.shapes import KIND_NAMES, _length, can_draw, dash_layout, drawing, is_icon, path_data, resolve, stretching_commands
+from confluence_whiteboard_exporter.shapes import (
+    KIND_NAMES,
+    _length,
+    can_draw,
+    dash_layout,
+    drawing,
+    is_icon,
+    path_data,
+    resolve,
+    stretching_commands,
+)
 
 
 def test_every_kind_is_described() -> None:

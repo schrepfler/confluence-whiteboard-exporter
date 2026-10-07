@@ -1,4 +1,4 @@
-"""Build confluence_whiteboard_exporter/palette.json from a dump made by scripts/dump_palette.js.
+"""Build the package's palette.json from a dump made by scripts/dump_palette.js.
 
     pbpaste | uv run scripts/build_palette.py
 

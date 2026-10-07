@@ -1,7 +1,7 @@
 [project]
 name = "confluence-whiteboard-exporter"
 version = "0.0.1"
-description = "Export Atlassian Confluence Whiteboards to JSON Canvas 1.0"
+description = "Export Confluence Cloud whiteboards to JSON Canvas, SVG and an interactive HTML viewer"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

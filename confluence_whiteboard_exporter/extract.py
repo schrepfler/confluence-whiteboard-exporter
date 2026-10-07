@@ -214,7 +214,8 @@ class Extractor:
             frame = await _wait_for_canvas_frame(page, timeout_ms=self.timeout_ms)
             await frame.evaluate(_PROBE_JS)
             await frame.wait_for_function(
-                "globalThis.__whiteboardExporter && globalThis.__whiteboardExporter.docReady && globalThis.__whiteboardExporter.docReady()",
+                "globalThis.__whiteboardExporter && globalThis.__whiteboardExporter.docReady"
+                " && globalThis.__whiteboardExporter.docReady()",
                 timeout=self.timeout_ms,
             )
             await _wait_for_doc_populated(frame, timeout_ms=10_000)

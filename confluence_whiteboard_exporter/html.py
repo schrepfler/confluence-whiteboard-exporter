@@ -129,8 +129,8 @@ _VIEWER_JS = r"""
     redrawAllEdges();
     enablePanZoom(svg);
     // For tests: the routines the viewer shares with the exporter.
-    window.whiteboardExporterViewer = { route: route, pathData: pathData, subpaths: subpaths, subpathD: subpathD, dashLayout: dashLayout,
-                               pointAt: pointAt, labelCentre: labelCentre };
+    window.whiteboardExporterViewer = { route: route, pathData: pathData, subpaths: subpaths, subpathD: subpathD,
+                                        dashLayout: dashLayout, pointAt: pointAt, labelCentre: labelCentre };
 
     function autoFit() {
       // Grow shapes whose text overflows by re-resolving their drawing for the

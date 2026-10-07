@@ -14,7 +14,28 @@ import math
 from collections import Counter
 
 from .adf import _xml_escape
-from .board import EDITOR_BOLD_WEIGHT, EDITOR_FONT_PX, EDITOR_HEADING_ABOVE, EDITOR_HEADING_BELOW, EDITOR_HEADING_WEIGHTS, EDITOR_HEADINGS, EDITOR_LINE_PX, LIST_INDENT_EM, SVG_METRICS, Board, Box, Edge, Kind, Label, Node, Point, Rgb, anchor_point, anchor_side, layout
+from .board import (
+    EDITOR_BOLD_WEIGHT,
+    EDITOR_FONT_PX,
+    EDITOR_HEADING_ABOVE,
+    EDITOR_HEADING_BELOW,
+    EDITOR_HEADING_WEIGHTS,
+    EDITOR_HEADINGS,
+    EDITOR_LINE_PX,
+    LIST_INDENT_EM,
+    SVG_METRICS,
+    Board,
+    Box,
+    Edge,
+    Kind,
+    Label,
+    Node,
+    Point,
+    Rgb,
+    anchor_point,
+    anchor_side,
+    layout,
+)
 from .connectors import ARROWHEAD_SCALE, ARROWHEADS, End, Route, end_stub, point_at, route, thickness
 from .palette import drawn
 from .shapes import DASH_PERIOD, DASH_SHARE, SHAPE_LINE_WIDTH, Section, dash_layout, drawing, fmt, kind_label, resolve

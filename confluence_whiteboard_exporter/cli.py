@@ -154,7 +154,8 @@ def reference_create(ctx: click.Context, space: str, board_id: str | None, heade
         sys.exit(2)
     state_path, session = reference_state_path(), storage_state_path()
     if not session.exists():
-        click.echo(f"ERROR: no saved browser session at {session}. Run `confluence-whiteboard-exporter auth attach` first.", err=True)
+        click.echo(f"ERROR: no saved browser session at {session}. "
+                   "Run `confluence-whiteboard-exporter auth attach` first.", err=True)
         sys.exit(2)
     state = _json.loads(state_path.read_text()) if state_path.exists() else {}
     known = state if (state.get("base_url"), state.get("space")) == (base_url, space) else {}
@@ -204,13 +205,14 @@ def reference_snapshot(ctx: click.Context, golden_dir: Path) -> None:
     base_url = ctx.obj["base_url"]
     state_path = reference_state_path()
     if not base_url or not state_path.exists():
-        click.echo("ERROR: no reference board yet; run `confluence-whiteboard-exporter reference create --space KEY` first.", err=True)
+        click.echo("ERROR: no reference board yet; "
+                   "run `confluence-whiteboard-exporter reference create --space KEY` first.", err=True)
         sys.exit(2)
     state = _json.loads(state_path.read_text())
     cells = spec()
     if state.get("spec_hash") != spec_hash(payload(cells)):
-        click.echo("ERROR: the spec changed since the board was built; run `confluence-whiteboard-exporter reference create` again.",
-                   err=True)
+        click.echo("ERROR: the spec changed since the board was built; "
+                   "run `confluence-whiteboard-exporter reference create` again.", err=True)
         sys.exit(2)
 
     board, centres, geometry, bundle, images = _asyncio.run(
@@ -247,13 +249,14 @@ def reference_report(target: Path, no_font: bool) -> None:
 
     golden_path = GOLDEN_DIR / "geometry.json"
     if not golden_path.exists():
-        click.echo(f"ERROR: no references at {golden_path}; run `confluence-whiteboard-exporter reference snapshot`.", err=True)
+        click.echo(f"ERROR: no references at {golden_path}; "
+                   "run `confluence-whiteboard-exporter reference snapshot`.", err=True)
         sys.exit(2)
     golden = _json.loads(golden_path.read_text())
     font = None if no_font else editor_font_path()
     if font is not None and not font.exists():
-        click.echo("  the editor's font is not cached (run `confluence-whiteboard-exporter reference snapshot`); "
-                   "our text is set in a fallback font", err=True)
+        click.echo("  the editor's font is not cached (run `confluence-whiteboard-exporter reference "
+                   "snapshot`); our text is set in a fallback font", err=True)
         font = None
     rows = build(spec(), golden, GOLDEN_DIR / "images", font)
     write(rows, target, golden.get("editor_bundle", ""))
@@ -282,7 +285,8 @@ def reference_metrics(ctx: click.Context, target: Path) -> None:
 
     state_path = reference_state_path()
     if not ctx.obj["base_url"] or not state_path.exists():
-        click.echo("ERROR: no reference board yet; run `confluence-whiteboard-exporter reference create --space KEY` first.", err=True)
+        click.echo("ERROR: no reference board yet; "
+                   "run `confluence-whiteboard-exporter reference create --space KEY` first.", err=True)
         sys.exit(2)
     state = _json.loads(state_path.read_text())
     styles = {"400": lambda t: doc(para(t)), "600": lambda t: doc(para(t, bold=True)),
@@ -312,7 +316,8 @@ def reference_metrics(ctx: click.Context, target: Path) -> None:
     summed = [sum(table["400"].get(ch, 0.0) for ch in name) for name in captions]
     fit = statistics.median(r["contentWidth"] / w for r, w in zip(results[len(keys):], summed, strict=True))
     atomic_write_text(target, _json.dumps({
-        "source": "the whiteboard editor's text engine, by `confluence-whiteboard-exporter reference metrics`; widths only",
+        "source": "the whiteboard editor's text engine, by "
+                  "`confluence-whiteboard-exporter reference metrics`; widths only",
         "fit": round(fit, 5), "styles": table}, ensure_ascii=False, separators=(",", ":")) + "\n")
     click.echo(f"wrote {target}: {len(METRIC_CHARS) + 1} characters in {len(styles)} styles, fit {fit:.4f}")
 

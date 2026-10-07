@@ -57,7 +57,8 @@ async def open_board(ctx: BrowserContext, base_url: str, space: str, board_id: s
     frame = await _wait_for_canvas_frame(page, timeout_ms=timeout_ms)
     await frame.evaluate(_PROBE_JS)
     await frame.wait_for_function(
-        "globalThis.__whiteboardExporter.docReady && globalThis.__whiteboardExporter.docReady()", timeout=timeout_ms
+        "globalThis.__whiteboardExporter.docReady && globalThis.__whiteboardExporter.docReady()",
+        timeout=timeout_ms,
     )
     await asyncio.sleep(READY_S)
     return page, frame

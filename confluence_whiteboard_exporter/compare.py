@@ -1,10 +1,10 @@
 """Compare our export of the reference board with what the editor drew.
 
 The reference (tests/reference/golden/geometry.json, written by
-`confluence-whiteboard-exporter reference snapshot`) holds the editor's drawn box for each
-element and drawn path for each connector, per cell. Here the spec is
-exported to SVG exactly as a user's board would be, and each element is
-measured against it:
+`confluence-whiteboard-exporter reference snapshot`) holds the editor's
+drawn box for each element and drawn path for each connector, per cell.
+Here the spec is exported to SVG exactly as a user's board would be, and
+each element is measured against it:
 
 - a box (a shape's, a text's, a label's) by its largest edge difference;
 - a path by the largest distance between the two lines (both sampled

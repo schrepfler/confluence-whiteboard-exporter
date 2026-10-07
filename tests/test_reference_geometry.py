@@ -46,7 +46,8 @@ def test_the_references_are_for_this_spec() -> None:
     golden = json.loads(GOLDEN.read_text())
     assert golden["spec_hash"] == spec_hash(payload(CELLS)), (
         "the spec changed since the references were taken: rebuild the board with "
-        "`confluence-whiteboard-exporter reference create --space KEY`, then run `confluence-whiteboard-exporter reference snapshot`"
+        "`confluence-whiteboard-exporter reference create --space KEY`, "
+        "then run `confluence-whiteboard-exporter reference snapshot`"
     )
     assert set(golden["cells"]) == {c.name for c in CELLS}
     assert not [e for entries in golden["cells"].values() for e in entries if e.get("missing")]

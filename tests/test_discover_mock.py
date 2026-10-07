@@ -4,7 +4,11 @@ import httpx
 import pytest
 import respx
 
-from confluence_whiteboard_exporter.discover import create_whiteboard, get_whiteboard, list_whiteboards_in_space
+from confluence_whiteboard_exporter.discover import (
+    create_whiteboard,
+    get_whiteboard,
+    list_whiteboards_in_space,
+)
 
 
 BASE = "https://acme.atlassian.net"
@@ -294,8 +298,8 @@ def test_create_whiteboard_posts_to_the_space_id() -> None:
         return_value=httpx.Response(200, json={"results": [{"id": "777", "key": "TEST"}]})
     )
     post = respx.post(f"{BASE}/wiki/api/v2/whiteboards").mock(
-        return_value=httpx.Response(200, json={"id": "4242", "title": "confluence-whiteboard-exporter reference", "spaceId": "777"})
+        return_value=httpx.Response(200, json={"id": "4242", "title": "Reference", "spaceId": "777"})
     )
-    meta = create_whiteboard(BASE, EMAIL, TOKEN, "TEST", "confluence-whiteboard-exporter reference")
-    assert (meta.boardId, meta.title, meta.spaceKey) == ("4242", "confluence-whiteboard-exporter reference", "TEST")
-    assert post.calls.last.request.content == b'{"spaceId":"777","title":"confluence-whiteboard-exporter reference"}'
+    meta = create_whiteboard(BASE, EMAIL, TOKEN, "TEST", "Reference")
+    assert (meta.boardId, meta.title, meta.spaceKey) == ("4242", "Reference", "TEST")
+    assert post.calls.last.request.content == b'{"spaceId":"777","title":"Reference"}'
