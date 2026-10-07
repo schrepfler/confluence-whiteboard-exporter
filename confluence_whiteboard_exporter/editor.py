@@ -57,14 +57,14 @@ async def open_board(ctx: BrowserContext, base_url: str, space: str, board_id: s
     frame = await _wait_for_canvas_frame(page, timeout_ms=timeout_ms)
     await frame.evaluate(_PROBE_JS)
     await frame.wait_for_function(
-        "globalThis.__wb2canvas.docReady && globalThis.__wb2canvas.docReady()", timeout=timeout_ms
+        "globalThis.__whiteboardExporter.docReady && globalThis.__whiteboardExporter.docReady()", timeout=timeout_ms
     )
     await asyncio.sleep(READY_S)
     return page, frame
 
 
 async def element_count(frame: Frame) -> int:
-    return int(await frame.evaluate("globalThis.__wb2canvas.boardSize()"))
+    return int(await frame.evaluate("globalThis.__whiteboardExporter.boardSize()"))
 
 
 async def clear_board(page: Page, frame: Frame, timeout_s: float = 30) -> None:
@@ -113,7 +113,7 @@ GEOMETRY_PROBE = (Path(__file__).with_name("geometry_probe.js")).read_text()
 async def read_stored(frame: Frame) -> tuple[dict, dict[str, tuple[float, float]]]:
     """The board's stored elements by id, with each label's proportion
     (`pp`) and side (`pop`) folded in, and each element's stored centre."""
-    dump = await frame.evaluate("globalThis.__wb2canvas.dumpYDoc()")
+    dump = await frame.evaluate("globalThis.__whiteboardExporter.dumpYDoc()")
     board = dump["board"]
     centres: dict[str, tuple[float, float]] = {}
     for entry in dump["dimensions"]:
@@ -128,7 +128,7 @@ async def read_stored(frame: Frame) -> tuple[dict, dict[str, tuple[float, float]
 async def read_geometry(frame: Frame) -> dict:
     """What the editor drew: `boxes` and `paths` by element id."""
     await frame.evaluate(GEOMETRY_PROBE)
-    return await frame.evaluate("globalThis.__wb2canvasGeometry.readAll()")
+    return await frame.evaluate("globalThis.__whiteboardExporterGeometry.readAll()")
 
 
 async def editor_bundle(frame: Frame) -> str:
@@ -143,7 +143,7 @@ async def measure_text(frame: Frame, items: list[dict]) -> list[dict]:
     """Lay text out with the editor's own text engine: each item is
     {adf, width, fontScale}; each result {lineCount, height, contentWidth}."""
     await frame.evaluate(GEOMETRY_PROBE)
-    return await frame.evaluate("(items) => globalThis.__wb2canvasGeometry.measure(items)", items)
+    return await frame.evaluate("(items) => globalThis.__whiteboardExporterGeometry.measure(items)", items)
 
 
 # Capturing what the editor draws. A canvas much larger than this is
@@ -155,12 +155,12 @@ CAPTURE_VIEWPORT = {"width": 3000, "height": 3000}
 # Share bar); both are hidden only while a tile is taken, since hiding them
 # also stops the wheel from panning.
 HIDE_INTERFACE = "* { visibility: hidden !important; } #canvas-main, #canvas-main * { visibility: visible !important; }"
-HIDE_PAGE = "* { visibility: hidden !important; } [data-wb2canvas-board] { visibility: visible !important; }"
+HIDE_PAGE = "* { visibility: hidden !important; } [data-whiteboard-exporter-board] { visibility: visible !important; }"
 
 
 async def read_camera(frame: Frame) -> dict[str, float]:
     await frame.evaluate(GEOMETRY_PROBE)
-    return await frame.evaluate("globalThis.__wb2canvasGeometry.readCamera()")
+    return await frame.evaluate("globalThis.__whiteboardExporterGeometry.readCamera()")
 
 
 async def set_zoom(page: Page, frame: Frame, percent: int) -> None:
@@ -184,7 +184,7 @@ async def capture_cells(page: Page, frame: Frame, rects: dict[str, tuple[float, 
     element = await frame.frame_element()
     view = await element.bounding_box()
     assert view is not None
-    await element.evaluate("(f) => f.setAttribute('data-wb2canvas-board', '')")
+    await element.evaluate("(f) => f.setAttribute('data-whiteboard-exporter-board', '')")
     centre = (view["x"] + view["width"] / 2, view["y"] + view["height"] / 2)
     # Beside the frame (Confluence's sidebar), or else above it.
     away = (view["x"] / 2, centre[1]) if view["x"] >= 20 else (centre[0], view["y"] / 2)

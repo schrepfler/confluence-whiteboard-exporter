@@ -214,7 +214,7 @@ class Extractor:
             frame = await _wait_for_canvas_frame(page, timeout_ms=self.timeout_ms)
             await frame.evaluate(_PROBE_JS)
             await frame.wait_for_function(
-                "globalThis.__wb2canvas && globalThis.__wb2canvas.docReady && globalThis.__wb2canvas.docReady()",
+                "globalThis.__whiteboardExporter && globalThis.__whiteboardExporter.docReady && globalThis.__whiteboardExporter.docReady()",
                 timeout=self.timeout_ms,
             )
             await _wait_for_doc_populated(frame, timeout_ms=10_000)
@@ -285,7 +285,7 @@ def _raise_if_login_page(url: str) -> None:
     if any(host in url for host in LOGIN_HOSTS):
         raise SessionExpiredError(
             "the saved Atlassian session was rejected (redirected to login); "
-            "run `wb2canvas auth attach` to refresh it"
+            "run `confluence-whiteboard-exporter auth attach` to refresh it"
         )
 
 
@@ -307,7 +307,7 @@ async def _wait_for_canvas_frame(page: Page, timeout_ms: int) -> Frame:
 async def _wait_for_doc_populated(frame: Frame, timeout_ms: int) -> None:
     try:
         await frame.wait_for_function(
-            "globalThis.__wb2canvas.boardSize() > 0",
+            "globalThis.__whiteboardExporter.boardSize() > 0",
             timeout=timeout_ms,
         )
     except PlaywrightTimeoutError:
@@ -315,12 +315,12 @@ async def _wait_for_doc_populated(frame: Frame, timeout_ms: int) -> None:
 
 
 async def _extract_via_clipboard(page: Page, frame: Frame) -> list[ClipboardElement]:
-    await frame.evaluate("globalThis.__wb2canvas.installClipboardCapture()")
+    await frame.evaluate("globalThis.__whiteboardExporter.installClipboardCapture()")
 
     mod = "Meta" if sys.platform == "darwin" else "Control"
 
     async def reset() -> None:
-        await frame.evaluate("globalThis.__wb2canvas.resetCapture()")
+        await frame.evaluate("globalThis.__whiteboardExporter.resetCapture()")
 
     async def s1_canvas_press() -> None:
         canvas = frame.locator("#canvas-main")
@@ -331,7 +331,7 @@ async def _extract_via_clipboard(page: Page, frame: Frame) -> list[ClipboardElem
         await canvas.press(f"{mod}+c", timeout=3_000)
 
     async def s2_body_press() -> None:
-        await frame.evaluate("globalThis.__wb2canvas.focusCanvas()")
+        await frame.evaluate("globalThis.__whiteboardExporter.focusCanvas()")
         await page.wait_for_timeout(120)
         body = frame.locator("body")
         await body.press(f"{mod}+a", timeout=3_000)
@@ -339,14 +339,14 @@ async def _extract_via_clipboard(page: Page, frame: Frame) -> list[ClipboardElem
         await body.press(f"{mod}+c", timeout=3_000)
 
     async def s3_page_keyboard() -> None:
-        await frame.evaluate("globalThis.__wb2canvas.focusCanvas()")
+        await frame.evaluate("globalThis.__whiteboardExporter.focusCanvas()")
         await page.wait_for_timeout(120)
         await page.keyboard.press(f"{mod}+a")
         await page.wait_for_timeout(150)
         await page.keyboard.press(f"{mod}+c")
 
     async def s4_synthetic() -> None:
-        await frame.evaluate("globalThis.__wb2canvas.dispatchSelectAllAndCopy()")
+        await frame.evaluate("globalThis.__whiteboardExporter.dispatchSelectAllAndCopy()")
 
     strategies: list[tuple[str, Any]] = [
         ("canvas-locator-press", s1_canvas_press),
@@ -365,7 +365,7 @@ async def _extract_via_clipboard(page: Page, frame: Frame) -> list[ClipboardElem
             continue
         try:
             await frame.wait_for_function(
-                "globalThis.__wb2canvas.getCapturedClipboard() !== null",
+                "globalThis.__whiteboardExporter.getCapturedClipboard() !== null",
                 timeout=2_500,
             )
             log.info("clipboard captured via %s", name)
@@ -378,7 +378,7 @@ async def _extract_via_clipboard(page: Page, frame: Frame) -> list[ClipboardElem
             f"clipboard payload not captured after all strategies (last: {last_err})"
         )
 
-    raw = await frame.evaluate("globalThis.__wb2canvas.getCapturedClipboard()")
+    raw = await frame.evaluate("globalThis.__whiteboardExporter.getCapturedClipboard()")
     if isinstance(raw, dict) and "__error" in raw:
         raise RuntimeError(f"clipboard parse error: {raw['__error']}")
     if not isinstance(raw, list):
@@ -387,7 +387,7 @@ async def _extract_via_clipboard(page: Page, frame: Frame) -> list[ClipboardElem
 
 
 async def _extract_via_fiber(frame: Frame) -> FiberDump:
-    raw: dict[str, Any] = await frame.evaluate("globalThis.__wb2canvas.dumpYDoc()")
+    raw: dict[str, Any] = await frame.evaluate("globalThis.__whiteboardExporter.dumpYDoc()")
     return FiberDump.model_validate(raw)
 
 
@@ -436,7 +436,7 @@ def _image_files(elements: list[ClipboardElement], fiber_dump: FiberDump | None)
 
 async def _copy_with_images(page: Page, frame: Frame) -> list[ClipboardElement]:
     """Copy the board, again if the copy is missing images that are still loading."""
-    expected = await frame.evaluate("globalThis.__wb2canvas.imageCount()")
+    expected = await frame.evaluate("globalThis.__whiteboardExporter.imageCount()")
     for attempt in range(COPY_RETRIES):
         elements = await _extract_via_clipboard(page, frame)
         got = sum(1 for e in elements if e.type == "image")

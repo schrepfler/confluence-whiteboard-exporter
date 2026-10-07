@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from wb2canvas.cli import main
+from confluence_whiteboard_exporter.cli import main
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_dump.json"
 MEDIA_ID = "3326b2e5-07e9-49ce-9b79-36a2d5a986fe"
@@ -90,7 +90,7 @@ class FakeExtractor:
         return None
 
     async def extract(self, board, out_dir: Path):
-        from wb2canvas.model import DumpFile
+        from confluence_whiteboard_exporter.model import DumpFile
 
         self.extracted.append(board.boardId)
         if board.boardId in self.fail_with:
@@ -100,8 +100,8 @@ class FakeExtractor:
 
 @pytest.fixture
 def fake_extractor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> type[FakeExtractor]:
-    import wb2canvas.extract as extract_mod
-    import wb2canvas.storage as storage_mod
+    import confluence_whiteboard_exporter.extract as extract_mod
+    import confluence_whiteboard_exporter.storage as storage_mod
 
     FakeExtractor.instances = []
     FakeExtractor.fail_with = {}
@@ -154,10 +154,10 @@ def test_extract_exits_nonzero_but_continues_when_a_board_fails(tmp_path: Path, 
 
 
 def test_expired_session_stops_the_run(tmp_path: Path, fake_extractor) -> None:
-    from wb2canvas.extract import SessionExpiredError
+    from confluence_whiteboard_exporter.extract import SessionExpiredError
 
     _space_index(tmp_path, "1", "2", "3")
-    fake_extractor.fail_with = {"1": SessionExpiredError("run `wb2canvas auth attach`")}
+    fake_extractor.fail_with = {"1": SessionExpiredError("run `confluence-whiteboard-exporter auth attach`")}
     result = _extract_space(tmp_path)
     assert result.exit_code == 1
     assert fake_extractor.instances[0].extracted == ["1"], "no point retrying with a dead session"

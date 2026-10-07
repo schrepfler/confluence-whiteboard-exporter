@@ -11,7 +11,7 @@
 //
 // Maps are found by shape, not name: the bundle's export names change with
 // every deploy.
-window.wb2canvasDumpPalette = async () => {
+window.whiteboardExporterDumpPalette = async () => {
   const frame = [...document.querySelectorAll('iframe')].find((f) => (f.src || '').includes('/whiteboards/whiteboard/'));
   const win = frame ? frame.contentWindow : window;
   const urls = [
@@ -47,7 +47,7 @@ window.wb2canvasDumpPalette = async () => {
   return JSON.stringify(dump);
 };
 
-window.wb2canvasDumpPalette().then((json) => {
+window.whiteboardExporterDumpPalette().then((json) => {
   if (typeof copy === 'function') {
     copy(json); // DevTools console utility
     console.log(`copied the palette (${json.length} bytes)`);

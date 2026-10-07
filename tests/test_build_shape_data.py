@@ -34,5 +34,5 @@ def test_build_keeps_reuse_icons_and_fixed_aspect() -> None:
 
 
 def test_the_shipped_data_covers_every_kind() -> None:
-    kinds = json.loads((ROOT / "wb2canvas" / "shape_data.json").read_text())["kinds"]
+    kinds = json.loads((ROOT / "confluence_whiteboard_exporter" / "shape_data.json").read_text())["kinds"]
     assert sorted(map(int, kinds)) == list(range(89))

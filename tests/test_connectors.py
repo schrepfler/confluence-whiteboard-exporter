@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from wb2canvas.connectors import ARROWHEADS, TENSION, End, _through_handles, end_stub, point_at, route, smooth_spline
+from confluence_whiteboard_exporter.connectors import ARROWHEADS, TENSION, End, _through_handles, end_stub, point_at, route, smooth_spline
 
 
 def _last(r) -> tuple[float, float]:
@@ -67,7 +67,7 @@ def test_arrowheads_grow_with_the_stroke_size() -> None:
 
 
 def test_every_cap_has_an_arrowhead() -> None:
-    from wb2canvas.board import CAPS
+    from confluence_whiteboard_exporter.board import CAPS
 
     assert set(CAPS.values()) - {"none"} == set(ARROWHEADS)
 

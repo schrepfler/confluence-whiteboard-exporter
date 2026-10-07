@@ -6,26 +6,28 @@ from pathlib import Path
 
 from platformdirs import user_cache_dir, user_config_dir
 
+APP = "confluence-whiteboard-exporter"  # names the per-user config and cache directories
+
 
 def storage_state_path() -> Path:
-    return Path(user_config_dir("wb2canvas")) / "storage_state.json"
+    return Path(user_config_dir(APP)) / "storage_state.json"
 
 
 def reference_state_path() -> Path:
     """Which whiteboard is the reference board on which site, outside the repo."""
-    return Path(user_config_dir("wb2canvas")) / "reference.json"
+    return Path(user_config_dir(APP)) / "reference.json"
 
 
 def editor_font_path() -> Path:
     """The editor's font, cached from the live page for our renders in the
     reference report. Never part of the repo."""
-    return Path(user_cache_dir("wb2canvas")) / "fonts" / "AtlassianSans-latin.woff2"
+    return Path(user_cache_dir(APP)) / "fonts" / "AtlassianSans-latin.woff2"
 
 
 def chrome_profile_dir() -> Path:
     """Private, persistent profile for `auth attach`. Kept out of the shared
     system temp dir so other local users cannot pre-create or read it."""
-    p = Path(user_cache_dir("wb2canvas")) / "chrome-profile"
+    p = Path(user_cache_dir(APP)) / "chrome-profile"
     p.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(p, 0o700)
     return p

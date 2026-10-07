@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from wb2canvas.board import from_dump, load_board
-from wb2canvas.canvas import CanvasDoc, CanvasNode, push_apart, render_canvas
-from wb2canvas.model import ClipboardElement, DumpFile
+from confluence_whiteboard_exporter.board import from_dump, load_board
+from confluence_whiteboard_exporter.canvas import CanvasDoc, CanvasNode, push_apart, render_canvas
+from confluence_whiteboard_exporter.model import ClipboardElement, DumpFile
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_dump.json"
 IMAGE_HREF = "media/3326b2e5-07e9-49ce-9b79-36a2d5a986fe.jpeg"

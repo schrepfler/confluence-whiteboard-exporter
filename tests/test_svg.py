@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from wb2canvas.board import from_dump
-from wb2canvas.cli import _parse_shape_map
-from wb2canvas.model import DumpFile
-from wb2canvas.svg import render_svg
+from confluence_whiteboard_exporter.board import from_dump
+from confluence_whiteboard_exporter.cli import _parse_shape_map
+from confluence_whiteboard_exporter.model import DumpFile
+from confluence_whiteboard_exporter.svg import render_svg
 
 
 def dump_to_svg(dump: DumpFile, **kw) -> str:

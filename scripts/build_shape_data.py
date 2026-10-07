@@ -1,4 +1,4 @@
-"""Build wb2canvas/shape_data.json from a dump made by scripts/dump_shapes.js.
+"""Build confluence_whiteboard_exporter/shape_data.json from a dump made by scripts/dump_shapes.js.
 
     pbpaste | uv run scripts/build_shape_data.py
 
@@ -15,7 +15,7 @@ import json
 import sys
 from pathlib import Path
 
-OUT = Path(__file__).resolve().parent.parent / "wb2canvas" / "shape_data.json"
+OUT = Path(__file__).resolve().parent.parent / "confluence_whiteboard_exporter" / "shape_data.json"
 PROBE_W, PROBE_H = 200, 300  # the box dump_shapes.js probes `boundingBoxToRenderBox` with
 
 

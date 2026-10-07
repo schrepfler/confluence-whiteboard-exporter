@@ -7,7 +7,7 @@
 //
 // Exports are found by shape, not name: the bundle's export names change with
 // every deploy. Icon artwork ("advanced" shapes) is deliberately left out.
-window.wb2canvasDumpShapes = async () => {
+window.whiteboardExporterDumpShapes = async () => {
   const frame = [...document.querySelectorAll('iframe')].find((f) => (f.src || '').includes('/whiteboards/whiteboard/'));
   const win = frame ? frame.contentWindow : window;
   const urls = [
@@ -69,7 +69,7 @@ window.wb2canvasDumpShapes = async () => {
   return JSON.stringify(dump);
 };
 
-window.wb2canvasDumpShapes().then((json) => {
+window.whiteboardExporterDumpShapes().then((json) => {
   if (typeof copy === 'function') {
     copy(json); // DevTools console utility
     console.log(`copied the shape definitions (${json.length} bytes)`);

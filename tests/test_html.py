@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from wb2canvas.board import load_board
-from wb2canvas.html import render_html
-from wb2canvas.svg import render_svg
+from confluence_whiteboard_exporter.board import load_board
+from confluence_whiteboard_exporter.html import render_html
+from confluence_whiteboard_exporter.svg import render_svg
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_dump.json"
 

@@ -7,11 +7,11 @@ import json
 import re
 from html import escape
 
-from wb2canvas.board import CAPS, from_dump
-from wb2canvas.model import ClipboardElement, DumpFile
-from wb2canvas.reference import CELL_H, CELL_W, COLUMNS, clipboard_html, payload, spec, spec_hash
-from wb2canvas.shapes import KIND_NAMES
-from wb2canvas.svg import render_svg
+from confluence_whiteboard_exporter.board import CAPS, from_dump
+from confluence_whiteboard_exporter.model import ClipboardElement, DumpFile
+from confluence_whiteboard_exporter.reference import CELL_H, CELL_W, COLUMNS, clipboard_html, payload, spec, spec_hash
+from confluence_whiteboard_exporter.shapes import KIND_NAMES
+from confluence_whiteboard_exporter.svg import render_svg
 
 CELLS = spec()
 PAYLOAD = payload(CELLS)
@@ -84,7 +84,7 @@ def test_the_hash_changes_with_the_spec() -> None:
 def test_what_the_editor_draws_stays_inside_each_cell() -> None:
     # Our layout matches the editor's drawn boxes (test_reference_geometry),
     # so it can check that nothing grows into a neighbouring cell.
-    from wb2canvas.board import SVG_METRICS, layout, stable_ids
+    from confluence_whiteboard_exporter.board import SVG_METRICS, layout, stable_ids
 
     clip = [ClipboardElement.model_validate(e) for e in PAYLOAD]
     board = from_dump(DumpFile.model_validate({"board": {"boardId": "1", "title": "reference", "spaceKey": "S"},

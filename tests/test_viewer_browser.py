@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from wb2canvas.board import load_board
-from wb2canvas.html import render_html
+from confluence_whiteboard_exporter.board import load_board
+from confluence_whiteboard_exporter.html import render_html
 
 sync_api = pytest.importorskip("playwright.sync_api")
 
@@ -129,8 +129,8 @@ def test_dragging_keeps_a_right_angled_connector_right_angled(browser, tmp_path:
 
 
 def _parity_board():
-    from wb2canvas.board import from_dump
-    from wb2canvas.model import DumpFile
+    from confluence_whiteboard_exporter.board import from_dump
+    from confluence_whiteboard_exporter.model import DumpFile
 
     def box(x: float, y: float) -> dict:
         return {"type": "shape", "shape": 0, "position": {"x": x, "y": y}, "size": {"x": 100, "y": 60}}
@@ -188,7 +188,7 @@ def test_the_viewer_routes_connectors_exactly_like_the_exporter(browser, tmp_pat
 
 
 def test_the_viewer_lays_out_shape_outlines_exactly_like_the_exporter(browser, tmp_path: Path) -> None:
-    from wb2canvas.shapes import SHAPE_LINE_WIDTH, dash_layout, stretching_commands, subpaths
+    from confluence_whiteboard_exporter.shapes import SHAPE_LINE_WIDTH, dash_layout, stretching_commands, subpaths
 
     page, errors = _open(browser, tmp_path, render_html(load_board(FIXTURE)))
     for kind in (0, 1, 2, 3, 4, 7, 10, 13, 22, 56, 84):
@@ -198,9 +198,9 @@ def test_the_viewer_lays_out_shape_outlines_exactly_like_the_exporter(browser, t
             for part in spec["parts"]:
                 py = [(s.d, dash_layout(s, SHAPE_LINE_WIDTH, mode)) for s in subpaths(part, 5, 7, w, h, mode)]
                 js = page.evaluate(
-                    """([cmds, w, h, mode]) => window.wb2canvasViewer.subpaths(cmds, 5, 7, w, h, mode).map(s => {
-                         const layout = window.wb2canvasViewer.dashLayout(s, 3, mode);
-                         return [window.wb2canvasViewer.subpathD(s), [layout.dashes, layout.offset]];
+                    """([cmds, w, h, mode]) => window.whiteboardExporterViewer.subpaths(cmds, 5, 7, w, h, mode).map(s => {
+                         const layout = window.whiteboardExporterViewer.dashLayout(s, 3, mode);
+                         return [window.whiteboardExporterViewer.subpathD(s), [layout.dashes, layout.offset]];
                        })""",
                     [part, w, h, mode],
                 )
@@ -215,7 +215,7 @@ def test_the_viewer_lays_out_shape_outlines_exactly_like_the_exporter(browser, t
 
 
 def test_a_label_rides_along_when_its_connector_moves(browser, tmp_path: Path) -> None:
-    from wb2canvas.board import Label
+    from confluence_whiteboard_exporter.board import Label
 
     board = load_board(FIXTURE)
     board.edges[0].labels = (Label(adf='{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Calls"}]}]}'),)

@@ -1,7 +1,7 @@
 """Our export of the reference board against what the editor drew.
 
-One test per cell of the spec (wb2canvas/reference.py). The references in
-tests/reference/golden/ come from the editor (`wb2canvas reference
+One test per cell of the spec (confluence_whiteboard_exporter/reference.py). The references in
+tests/reference/golden/ come from the editor (`confluence-whiteboard-exporter reference
 snapshot`); these tests need no Confluence. A cell passes when each of its
 elements is within tolerance: its box within BOX_TOLERANCE on every edge,
 its path within PATH_TOLERANCE everywhere. Captions are only scaffolding
@@ -21,8 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from wb2canvas.compare import CellResult, compare
-from wb2canvas.reference import payload, spec, spec_hash
+from confluence_whiteboard_exporter.compare import CellResult, compare
+from confluence_whiteboard_exporter.reference import payload, spec, spec_hash
 
 GOLDEN = Path(__file__).parent / "reference" / "golden" / "geometry.json"
 BOX_TOLERANCE = 1.5  # board units
@@ -46,7 +46,7 @@ def test_the_references_are_for_this_spec() -> None:
     golden = json.loads(GOLDEN.read_text())
     assert golden["spec_hash"] == spec_hash(payload(CELLS)), (
         "the spec changed since the references were taken: rebuild the board with "
-        "`wb2canvas reference create --space KEY`, then run `wb2canvas reference snapshot`"
+        "`confluence-whiteboard-exporter reference create --space KEY`, then run `confluence-whiteboard-exporter reference snapshot`"
     )
     assert set(golden["cells"]) == {c.name for c in CELLS}
     assert not [e for entries in golden["cells"].values() for e in entries if e.get("missing")]

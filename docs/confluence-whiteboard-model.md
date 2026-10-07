@@ -1,7 +1,7 @@
 # Confluence whiteboard data model
 
 Reference for what a Confluence Cloud whiteboard can contain and how it is
-stored, as used by `wb2canvas`.
+stored, as used by `confluence-whiteboard-exporter`.
 
 ## Provenance
 
@@ -103,9 +103,9 @@ the box), and a database too short for one line grows both ways.
   larger counts, as CSS margins collapse, and all of it scales with the
   font scale (e.g. h1 then a paragraph: 32 + 6 + 22 = 60).
 - **Widths and line breaks.** Text is set by the editor's own text engine
-  (`CanvasContentLayoutManager`), not the browser. `wb2canvas/text_metrics.json`
+  (`CanvasContentLayoutManager`), not the browser. `confluence_whiteboard_exporter/text_metrics.json`
   holds each character's width as that engine sets it, per style, measured
-  by `wb2canvas reference metrics`. A line holds a word only if the space
+  by `confluence-whiteboard-exporter reference metrics`. A line holds a word only if the space
   after it fits too; a line may break after a hyphen; a word wider than the
   line breaks anywhere. The space where a line wraps stays on the line and
   counts when it is aligned, so a wrapped right-aligned line ends a space
@@ -133,7 +133,7 @@ editor looks each one up by palette name (`elementColorMap`) and paints it
 with that name's design token in the current theme (`allColorMapTokenNames`),
 so stored `#172B4D` (text, `color.text`) is drawn `#292A2E`, the grey fill
 `#B3B9C4` (`n400`) `#B7B9BE`, and connector grey `#758195` (`n600`)
-`#7D818A` in the 2025 light theme. `wb2canvas/palette.json` holds the
+`#7D818A` in the 2025 light theme. `confluence_whiteboard_exporter/palette.json` holds the
 resolved table; `scripts/dump_palette.js` and `scripts/build_palette.py`
 regenerate it from a live board.
 
@@ -156,7 +156,7 @@ Each element type declares which box it uses
 
 ## Element types
 
-| Type id | Model class | What it is | wb2canvas |
+| Type id | Model class | What it is | confluence-whiteboard-exporter |
 |---|---|---|---|
 | `shape` | YShape | Shape with text; kind in `shape` (below) | ✅ |
 | `text` | YText | Free-floating text | ✅ |
@@ -184,7 +184,7 @@ Each element type declares which box it uses
 | slide types | YSlide, YSlideChildElement, YSlideDecorationElement, YSlideChartElement | Presentation mode | ❌ |
 | `timer`, `timerV2`, voting session, `flags` | YTimer, YVotingSession, … | Collaboration tools | ❌ |
 
-Elements marked ❌ are omitted from exports, and `wb2canvas` logs a warning
+Elements marked ❌ are omitted from exports, and `confluence-whiteboard-exporter` logs a warning
 counting how many of each were omitted, so nothing disappears silently. For
 most of them the clipboard field layout has not been observed yet; supporting
 one needs a sample board containing it.
@@ -304,8 +304,8 @@ aspect ratio at the top of their box, with the label below (`exteriorTextArea`).
 Section colours are the shape's fill and line colours. A section may swap them:
 the UML start node, for example, is a dot filled with the line colour.
 
-`wb2canvas` draws every kind from these definitions, stored in
-`wb2canvas/shape_data.json`. Icon artwork is Atlassian's and is not
+`confluence-whiteboard-exporter` draws every kind from these definitions, stored in
+`confluence_whiteboard_exporter/shape_data.json`. Icon artwork is Atlassian's and is not
 included, so icons are drawn as placeholders with their label below, and a
 warning names them. To refresh the data after an editor update:
 
@@ -427,7 +427,7 @@ Use `--shape-map` to draw a kind as another, by number or key, e.g.
 ### Connector routing
 
 The editor routes connectors itself; nothing about the drawn path is stored
-except the waypoints. `wb2canvas` reimplements its router:
+except the waypoints. `confluence-whiteboard-exporter` reimplements its router:
 
 - **Ends.** Each end sits on its element's drawn box at the anchor
   (`left`/`top` fractions). Its direction is the box side the anchor is on,
@@ -443,7 +443,7 @@ except the waypoints. `wb2canvas` reimplements its router:
     `w + 0.68 · sin(2w − π)`, where `w` is the start-to-end angle.
 - **Straight** connectors are a polyline through the waypoints.
 - **Dynamic** connectors are right-angled. Through waypoint handles
-  `wb2canvas` ports the editor's own algorithm
+  `confluence-whiteboard-exporter` ports the editor's own algorithm
   (`computeFindOrthogonalPathWithWaypoints`): coordinates alternate between
   x and y, each handle pins its segment, and an end that would leave or
   enter along the wrong axis first steps out of its box by `4w + 10` (`w`
@@ -485,7 +485,7 @@ straight stub. Where the line is "hidden", that stub is not drawn and the
 graphic covers it.
 
 Atlassian's own SVG exporter ignores all of this: it draws only `arrow`, as
-a filled triangle. JSON Canvas has only `arrow` and `none`, so `wb2canvas`
+a filled triangle. JSON Canvas has only `arrow` and `none`, so `confluence-whiteboard-exporter`
 maps the three arrowheads to `arrow` and drops the others with a warning.
 JSON Canvas edges are drawn by the viewer (Obsidian curves them), so routing
 and waypoints are lost there too.

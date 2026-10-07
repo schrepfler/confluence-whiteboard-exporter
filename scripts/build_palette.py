@@ -1,4 +1,4 @@
-"""Build wb2canvas/palette.json from a dump made by scripts/dump_palette.js.
+"""Build confluence_whiteboard_exporter/palette.json from a dump made by scripts/dump_palette.js.
 
     pbpaste | uv run scripts/build_palette.py
 
@@ -17,7 +17,7 @@ import re
 import sys
 from pathlib import Path
 
-OUT = Path(__file__).resolve().parent.parent / "wb2canvas" / "palette.json"
+OUT = Path(__file__).resolve().parent.parent / "confluence_whiteboard_exporter" / "palette.json"
 OPAQUE = re.compile(r"#[0-9A-Fa-f]{6}")
 
 

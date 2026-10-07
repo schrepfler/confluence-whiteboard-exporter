@@ -1,4 +1,4 @@
-"""Path sampling for the comparison with the editor (wb2canvas/compare.py)."""
+"""Path sampling for the comparison with the editor (confluence_whiteboard_exporter/compare.py)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-from wb2canvas.compare import _trim, editor_points, hausdorff, svg_points
+from confluence_whiteboard_exporter.compare import _trim, editor_points, hausdorff, svg_points
 
 
 def test_an_editor_right_angle_turns_the_way_its_headings_say() -> None:

@@ -4,7 +4,7 @@ import httpx
 import pytest
 import respx
 
-from wb2canvas.discover import create_whiteboard, get_whiteboard, list_whiteboards_in_space
+from confluence_whiteboard_exporter.discover import create_whiteboard, get_whiteboard, list_whiteboards_in_space
 
 
 BASE = "https://acme.atlassian.net"
@@ -188,7 +188,7 @@ def test_get_whiteboard_handles_epoch_ms_and_lookups_space_key() -> None:
 
 
 def test_follow_next_decodes_cursor_so_httpx_does_not_double_encode() -> None:
-    from wb2canvas.discover import _follow_next
+    from confluence_whiteboard_exporter.discover import _follow_next
 
     path, params = _follow_next(
         {"_links": {"next": "/wiki/api/v2/pages/1/direct-children?cursor=abc%3D%3D&limit=250"}}
@@ -198,7 +198,7 @@ def test_follow_next_decodes_cursor_so_httpx_does_not_double_encode() -> None:
 
 
 def test_follow_next_prefixes_v1_context_relative_links() -> None:
-    from wb2canvas.discover import _follow_next
+    from confluence_whiteboard_exporter.discover import _follow_next
 
     path, _ = _follow_next(
         {"_links": {"context": "/wiki", "next": "/rest/api/search?cql=x&start=100"}}
@@ -294,8 +294,8 @@ def test_create_whiteboard_posts_to_the_space_id() -> None:
         return_value=httpx.Response(200, json={"results": [{"id": "777", "key": "TEST"}]})
     )
     post = respx.post(f"{BASE}/wiki/api/v2/whiteboards").mock(
-        return_value=httpx.Response(200, json={"id": "4242", "title": "wb2canvas reference", "spaceId": "777"})
+        return_value=httpx.Response(200, json={"id": "4242", "title": "confluence-whiteboard-exporter reference", "spaceId": "777"})
     )
-    meta = create_whiteboard(BASE, EMAIL, TOKEN, "TEST", "wb2canvas reference")
-    assert (meta.boardId, meta.title, meta.spaceKey) == ("4242", "wb2canvas reference", "TEST")
-    assert post.calls.last.request.content == b'{"spaceId":"777","title":"wb2canvas reference"}'
+    meta = create_whiteboard(BASE, EMAIL, TOKEN, "TEST", "confluence-whiteboard-exporter reference")
+    assert (meta.boardId, meta.title, meta.spaceKey) == ("4242", "confluence-whiteboard-exporter reference", "TEST")
+    assert post.calls.last.request.content == b'{"spaceId":"777","title":"confluence-whiteboard-exporter reference"}'

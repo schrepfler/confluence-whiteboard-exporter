@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from wb2canvas.board import (
+from confluence_whiteboard_exporter.board import (
     CANVAS_METRICS,
     SVG_METRICS,
     Kind,
@@ -17,9 +17,9 @@ from wb2canvas.board import (
     node_box,
     stable_ids,
 )
-from wb2canvas.canvas import render_canvas
-from wb2canvas.model import ClipboardElement, DumpFile
-from wb2canvas.svg import render_svg
+from confluence_whiteboard_exporter.canvas import render_canvas
+from confluence_whiteboard_exporter.model import ClipboardElement, DumpFile
+from confluence_whiteboard_exporter.svg import render_svg
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_dump.json"
 META = {"boardId": "1", "title": "t", "spaceKey": "S"}
@@ -340,14 +340,14 @@ def test_stored_colours_are_drawn_in_the_editors_theme() -> None:
 
 
 def test_a_colour_outside_the_palette_is_drawn_as_stored() -> None:
-    from wb2canvas.palette import drawn
+    from confluence_whiteboard_exporter.palette import drawn
 
     assert drawn("#123456") == "#123456"
     assert drawn("#172b4d") == "#292A2E"
 
 
 def test_text_is_measured_in_the_editors_font() -> None:
-    from wb2canvas.board import text_width
+    from confluence_whiteboard_exporter.board import text_width
 
     # Narrow letters really are narrower; widths are not a character count.
     assert text_width("iiii") < text_width("mmmm") / 2
@@ -356,7 +356,7 @@ def test_text_is_measured_in_the_editors_font() -> None:
 
 def test_a_font_scale_scales_text_set_at_the_editors_size() -> None:
     # The editor lays scaled text out at its own size, then scales it.
-    from wb2canvas.board import text_width
+    from confluence_whiteboard_exporter.board import text_width
 
     assert SVG_METRICS.scaled(2).width("scaled") == pytest.approx(2 * text_width("scaled"))
 
@@ -368,6 +368,6 @@ def test_a_font_scale_scales_text_set_at_the_editors_size() -> None:
     ("## Head\n- a", 1, 49), ("# Head\nBody", 2, 120),
 ])
 def test_headings_are_spaced_as_in_the_editor(markdown: str, scale: float, height: float) -> None:
-    from wb2canvas.board import _wrapped_height
+    from confluence_whiteboard_exporter.board import _wrapped_height
 
     assert _wrapped_height(markdown, 1000, SVG_METRICS.scaled(scale), pad_h=0) == pytest.approx(height)

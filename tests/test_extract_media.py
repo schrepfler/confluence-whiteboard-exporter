@@ -4,11 +4,11 @@ import asyncio
 import logging
 from pathlib import Path
 
-from wb2canvas.board import from_dump
-from wb2canvas.canvas import render_canvas
-from wb2canvas.extract import _capture_media, _keep_only
-from wb2canvas.model import DumpFile
-from wb2canvas.svg import render_svg
+from confluence_whiteboard_exporter.board import from_dump
+from confluence_whiteboard_exporter.canvas import render_canvas
+from confluence_whiteboard_exporter.extract import _capture_media, _keep_only
+from confluence_whiteboard_exporter.model import DumpFile
+from confluence_whiteboard_exporter.svg import render_svg
 
 UUID = "06418344-e13f-4c27-acb7-06d59cd24f67"
 

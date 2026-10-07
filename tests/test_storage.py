@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from wb2canvas.extract import SessionExpiredError, _raise_if_login_page
-from wb2canvas.storage import atomic_write_text
+from confluence_whiteboard_exporter.extract import SessionExpiredError, _raise_if_login_page
+from confluence_whiteboard_exporter.storage import atomic_write_text
 
 
 def test_atomic_write_secret_file_is_0600(tmp_path: Path) -> None:
@@ -64,7 +64,7 @@ class _FakePlaywright:
 def test_launch_prefers_installed_chrome() -> None:
     import asyncio
 
-    from wb2canvas.extract import launch_browser
+    from confluence_whiteboard_exporter.extract import launch_browser
 
     assert asyncio.run(launch_browser(_FakePlaywright(set()), headless=True)) == "browser:chrome"
 
@@ -72,7 +72,7 @@ def test_launch_prefers_installed_chrome() -> None:
 def test_launch_falls_back_to_bundled_chromium() -> None:
     import asyncio
 
-    from wb2canvas.extract import launch_browser
+    from confluence_whiteboard_exporter.extract import launch_browser
 
     assert asyncio.run(launch_browser(_FakePlaywright({"chrome"}), headless=True)) == "browser:bundled"
 
@@ -80,7 +80,7 @@ def test_launch_falls_back_to_bundled_chromium() -> None:
 def test_launch_without_any_browser_explains_how_to_get_one() -> None:
     import asyncio
 
-    from wb2canvas.extract import launch_browser
+    from confluence_whiteboard_exporter.extract import launch_browser
 
     with pytest.raises(RuntimeError, match="install Google Chrome"):
         asyncio.run(launch_browser(_FakePlaywright({"chrome", None}), headless=True))

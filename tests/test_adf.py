@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from wb2canvas.adf import adf_to_html, adf_to_markdown, safe_href
+from confluence_whiteboard_exporter.adf import adf_to_html, adf_to_markdown, safe_href
 
 
 def _linked(href: str) -> str:

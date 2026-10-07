@@ -1,5 +1,5 @@
 (() => {
-  if (globalThis.__wb2canvas) return;
+  if (globalThis.__whiteboardExporter) return;
 
   const _state = { capturedClipboard: null };
 
@@ -131,7 +131,7 @@
     if (document.body && typeof document.body.focus === 'function') document.body.focus();
   }
 
-  globalThis.__wb2canvas = {
+  globalThis.__whiteboardExporter = {
     getDocFromFiber,
     docReady,
     boardSize,

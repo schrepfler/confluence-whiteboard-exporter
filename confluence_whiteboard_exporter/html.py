@@ -129,7 +129,7 @@ _VIEWER_JS = r"""
     redrawAllEdges();
     enablePanZoom(svg);
     // For tests: the routines the viewer shares with the exporter.
-    window.wb2canvasViewer = { route: route, pathData: pathData, subpaths: subpaths, subpathD: subpathD, dashLayout: dashLayout,
+    window.whiteboardExporterViewer = { route: route, pathData: pathData, subpaths: subpaths, subpathD: subpathD, dashLayout: dashLayout,
                                pointAt: pointAt, labelCentre: labelCentre };
 
     function autoFit() {

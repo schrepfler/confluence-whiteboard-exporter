@@ -1,4 +1,4 @@
-"""The reference report's pixel score and statuses (wb2canvas/report.py)."""
+"""The reference report's pixel score and statuses (confluence_whiteboard_exporter/report.py)."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import pytest
 pytest.importorskip("PIL")
 from PIL import Image, ImageDraw  # noqa: E402
 
-from wb2canvas.reference import Cell, icon, shape  # noqa: E402
-from wb2canvas.report import pixel_difference, placeholder  # noqa: E402
+from confluence_whiteboard_exporter.reference import Cell, icon, shape  # noqa: E402
+from confluence_whiteboard_exporter.report import pixel_difference, placeholder  # noqa: E402
 
 
 def _box(x: int, y: int) -> Image.Image:

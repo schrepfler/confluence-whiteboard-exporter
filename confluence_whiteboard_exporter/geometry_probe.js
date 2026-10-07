@@ -13,7 +13,7 @@
 // which Becsy only lets a system read while it executes, so they are read
 // during one frame of the system that draws paths.
 (() => {
-  if (globalThis.__wb2canvasGeometry) return;
+  if (globalThis.__whiteboardExporterGeometry) return;
 
   async function moduleUrls() {
     return [...new Set([
@@ -23,7 +23,7 @@
   }
 
   async function captureWorld(timeoutMs = 5000) {
-    if (globalThis.__wb2canvasWorld) return globalThis.__wb2canvasWorld;
+    if (globalThis.__whiteboardExporterWorld) return globalThis.__whiteboardExporterWorld;
     for (const url of await moduleUrls()) {
       let mod;
       try { mod = await import(url); } catch (_e) { continue; }
@@ -37,7 +37,7 @@
         });
         World.prototype.execute = original;
         if (!world) throw new Error('the editor did not run a frame');
-        globalThis.__wb2canvasWorld = world;
+        globalThis.__whiteboardExporterWorld = world;
         return world;
       }
     }
@@ -100,7 +100,7 @@
   async function readAll() {
     const world = await captureWorld();
     const engine = system(world, 'SynchroniseBoundingBoxSystem').positioningEngine;
-    const doc = globalThis.__wb2canvas.getDocFromFiber();
+    const doc = globalThis.__whiteboardExporter.getDocFromFiber();
     const types = {};
     doc.share.get('board').forEach((el, id) => { types[id] = el.get('t'); });
     const boxes = {};
@@ -129,7 +129,7 @@
     const out = [];
     for (const [i, item] of items.entries()) {
       const layout = await engine.requestLayout({
-        contentId: `wb2canvas-measure-${i}-${Date.now()}`, adfContent: item.adf, width: item.width,
+        contentId: `whiteboard-exporter-measure-${i}-${Date.now()}`, adfContent: item.adf, width: item.width,
         alignment: 'left', fontScale: item.fontScale ?? 1,
       });
       const m = layout.metrics;
@@ -164,5 +164,5 @@
     });
   }
 
-  globalThis.__wb2canvasGeometry = { readAll, measure, readCamera };
+  globalThis.__whiteboardExporterGeometry = { readAll, measure, readCamera };
 })();

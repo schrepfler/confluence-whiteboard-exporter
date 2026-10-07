@@ -1,4 +1,4 @@
-# wb2canvas
+# confluence-whiteboard-exporter
 
 Export Atlassian Confluence Cloud whiteboards to
 [JSON Canvas](https://jsoncanvas.org) (editable in Obsidian), a static SVG
@@ -59,7 +59,7 @@ Log in once. This opens your own Chrome with a private profile; sign in as
 usual and press Enter in the terminal to save the session:
 
 ```sh
-uv run wb2canvas auth attach
+uv run confluence-whiteboard-exporter auth attach
 ```
 
 Driving the login through an automated browser is deliberately not offered:
@@ -69,14 +69,14 @@ whenever extraction reports that the session was rejected.
 One board:
 
 ```sh
-uv run wb2canvas extract 1000001
-uv run wb2canvas convert out/<spaceKey>/1000001/dump.json -f canvas -f svg -f html
+uv run confluence-whiteboard-exporter extract 1000001
+uv run confluence-whiteboard-exporter convert out/<spaceKey>/1000001/dump.json -f canvas -f svg -f html
 ```
 
 A whole space, straight into an Obsidian vault:
 
 ```sh
-uv run wb2canvas export <spaceKey> --vault ~/Obsidian/Vault --vault-prefix Whiteboards -f canvas -f svg
+uv run confluence-whiteboard-exporter export <spaceKey> --vault ~/Obsidian/Vault --vault-prefix Whiteboards -f canvas -f svg
 ```
 
 Boards whose `dump.json` already exists are skipped; pass `--force` to

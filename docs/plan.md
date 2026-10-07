@@ -62,7 +62,7 @@ built from code, with what the editor makes of it kept as the reference.
 
 ### Pieces
 
-1. **Spec** (`wb2canvas/reference.py`): a grid of labelled cells, each
+1. **Spec** (`confluence_whiteboard_exporter/reference.py`): a grid of labelled cells, each
    holding one variation with a caption naming it:
    - every shape kind, at two sizes; fill on and off; each stroke style
      and size; a sample of palette colours;
@@ -78,7 +78,7 @@ built from code, with what the editor makes of it kept as the reference.
 2. **Payload generator**: turns the spec into the clipboard payload the
    editor reads when pasting, the same format the extractor already
    reads from a copy.
-3. **`wb2canvas reference create --space KEY`**: creates an empty
+3. **`confluence-whiteboard-exporter reference create --space KEY`**: creates an empty
    whiteboard through the REST API and pastes the payload into it in the
    logged-in browser. The editor measures the text and grows the boxes
    itself, which is exactly what the references should capture. The
@@ -98,7 +98,7 @@ built from code, with what the editor makes of it kept as the reference.
    the same settings and browser login as an export): read the tester's
    reference board again and report any drift from the references, which
    means the editor changed; `--update-goldens` rewrites the references.
-7. **Report** (`wb2canvas reference report`, writes `out/report/index.html`,
+7. **Report** (`confluence-whiteboard-exporter reference report`, writes `out/report/index.html`,
    not committed): one row per cell with the editor's image, our render,
    a diff overlay, the measured differences and pass, warn, known or
    fail; images embedded, so the page is self-contained. Our renders use
@@ -108,10 +108,10 @@ built from code, with what the editor makes of it kept as the reference.
 
 ### Order of work
 
-1. ✅ Spec, payload generator and `wb2canvas reference create`: 208 cells,
+1. ✅ Spec, payload generator and `confluence-whiteboard-exporter reference create`: 208 cells,
    548 elements, pasted and read back intact in about 30 seconds.
 2. ✅ Reading the editor's drawn geometry and comparing it per cell:
-   `wb2canvas reference snapshot` writes `tests/reference/golden/geometry.json`;
+   `confluence-whiteboard-exporter reference snapshot` writes `tests/reference/golden/geometry.json`;
    `tests/test_reference_geometry.py` runs one test per cell, offline.
    170 cells matched at first; 40 were known gaps, listed below.
 3. ✅ Close the gaps, one kind at a time, each flipping its cells to
@@ -171,7 +171,7 @@ drawn pixels differ.
 
 ### How the geometry is read
 
-`wb2canvas/geometry_probe.js`, read-only. The editor runs an
+`confluence_whiteboard_exporter/geometry_probe.js`, read-only. The editor runs an
 entity-component system (Becsy); the probe finds its World class among
 the page's modules and captures the running world on its next frame.
 Drawn boxes come from the positioning engine, by element id; connector
