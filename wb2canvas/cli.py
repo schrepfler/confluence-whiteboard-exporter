@@ -193,11 +193,12 @@ GOLDEN_DIR = Path("tests/reference/golden")
 @click.pass_context
 def reference_snapshot(ctx: click.Context, golden_dir: Path) -> None:
     """Read what the editor drew on the reference board and save it as the
-    references the tests compare against."""
+    references the tests compare against: its geometry per cell, and an
+    image of each cell at 100%."""
     import asyncio as _asyncio
     import json as _json
 
-    from .reference import match_board, payload, spec, spec_hash
+    from .reference import cell_slug, match_board, payload, spec, spec_hash
     from .storage import atomic_write_text, reference_state_path, storage_state_path
 
     base_url = ctx.obj["base_url"]
@@ -212,16 +213,53 @@ def reference_snapshot(ctx: click.Context, golden_dir: Path) -> None:
                    err=True)
         sys.exit(2)
 
-    board, centres, geometry, bundle = _asyncio.run(
-        _read_reference(base_url, state["space"], state["board_id"], storage_state_path()))
+    board, centres, geometry, bundle, images = _asyncio.run(
+        _read_reference(base_url, state["space"], state["board_id"], storage_state_path(), cells))
     golden = match_board(cells, board, centres, geometry)
     golden["editor_bundle"] = bundle
     missing = [f"{name}#{e['place']}" for name, entries in golden["cells"].items() for e in entries if e.get("missing")]
     target = golden_dir / "geometry.json"
     atomic_write_text(target, _json.dumps(golden, indent=1) + "\n")
-    click.echo(f"wrote {target}: {len(golden['cells'])} cells, editor {bundle}")
+    image_dir = golden_dir / "images"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    for old in image_dir.glob("*.png"):
+        old.unlink()
+    for name, png in images.items():
+        (image_dir / f"{cell_slug(name)}.png").write_bytes(png)
+    click.echo(f"wrote {target} and {len(images)} images in {image_dir}: {len(golden['cells'])} cells, editor {bundle}")
     if missing:
         click.echo(f"  {len(missing)} element(s) not found on the board: {', '.join(missing[:10])}", err=True)
+
+
+@reference.command("report")
+@click.option("--out", "target", type=click.Path(dir_okay=False, path_type=Path),
+              default=Path("out/report/index.html"), show_default=True)
+@click.option("--no-font", is_flag=True, help="Render ours without the editor's font, even if it is cached.")
+def reference_report(target: Path, no_font: bool) -> None:
+    """Write a page showing each cell of the reference board as the editor
+    draws it beside our export of it, with what differs. Needs no
+    Confluence: it uses the references in tests/reference/golden."""
+    import json as _json
+
+    from .reference import spec
+    from .report import build, write
+    from .storage import editor_font_path
+
+    golden_path = GOLDEN_DIR / "geometry.json"
+    if not golden_path.exists():
+        click.echo(f"ERROR: no references at {golden_path}; run `wb2canvas reference snapshot`.", err=True)
+        sys.exit(2)
+    golden = _json.loads(golden_path.read_text())
+    font = None if no_font else editor_font_path()
+    if font is not None and not font.exists():
+        click.echo("  the editor's font is not cached (run `wb2canvas reference snapshot`); "
+                   "our text is set in a fallback font", err=True)
+        font = None
+    rows = build(spec(), golden, GOLDEN_DIR / "images", font)
+    write(rows, target, golden.get("editor_bundle", ""))
+    counts = {s: sum(r.status == s for r in rows) for s in ("pass", "warn", "known", "fail")}
+    click.echo(f"wrote {target}: {counts['pass']} pass, {counts['warn']} warn, {counts['known']} known, "
+               f"{counts['fail']} fail")
 
 
 METRIC_CHARS = [chr(c) for c in range(33, 127)] + list("\u2019\u2018\u201c\u201d\u2013\u2014\u2022\u2026\u00e9\u00e8\u00e0\u00fc\u00f6\u00e4")
@@ -287,13 +325,21 @@ async def _measure(base_url: str, space: str, board_id: str, items: list[dict], 
         return await measure_text(frame, items)
 
 
-async def _read_reference(base_url: str, space: str, board_id: str, session: Path) -> tuple:
-    from .editor import browser_context, editor_bundle, open_board, read_geometry, read_stored
+async def _read_reference(base_url: str, space: str, board_id: str, session: Path, cells: list) -> tuple:
+    from .editor import (CAPTURE_VIEWPORT, browser_context, capture_cells, editor_bundle, fetch_editor_font,
+                         open_board, read_geometry, read_stored)
+    from .reference import cell_rects, paste_offset, payload
+    from .storage import editor_font_path
 
-    async with browser_context(session) as browser:
-        _, frame = await open_board(browser, base_url, space, board_id)
+    async with browser_context(session, viewport=CAPTURE_VIEWPORT) as browser:
+        page, frame = await open_board(browser, base_url, space, board_id)
         board, centres = await read_stored(frame)
-        return board, centres, await read_geometry(frame), await editor_bundle(frame)
+        geometry, bundle = await read_geometry(frame), await editor_bundle(frame)
+        ox, oy = paste_offset(payload(cells), board, centres)
+        rects = {name: (x + ox, y + oy, w, h) for name, (x, y, w, h) in cell_rects(cells).items()}
+        images = await capture_cells(page, frame, rects)
+        await fetch_editor_font(page, frame, editor_font_path())
+        return board, centres, geometry, bundle, images
 
 
 async def _build_reference(base_url: str, space: str, board_id: str, html: str, expected: int,

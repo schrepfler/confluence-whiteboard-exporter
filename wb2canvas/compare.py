@@ -6,7 +6,7 @@ element and drawn path for each connector, per cell. Here the spec is
 exported to SVG exactly as a user's board would be, and each element is
 measured against it:
 
-- a box by its largest edge difference;
+- a box (a shape's, a text's, a label's) by its largest edge difference;
 - a path by the largest distance between the two lines (both sampled
   densely), so a route that bends differently shows however short it is.
   The editor's path runs to the end point under an arrowhead that covers
@@ -59,6 +59,7 @@ def compare(cells: list[Cell], golden: Json) -> list[CellResult]:
          "strategy": "clipboard", "elements": clip}))
     svg = render_svg(board)
     boxes = {m["id"]: tuple(float(m[k]) for k in ("x", "y", "w", "h")) for m in _node_boxes(svg)}
+    boxes |= _label_boxes(svg)
     paths = dict(re.findall(r'<path class="wb-edge" data-id="([^"]+)"[^>]*?\sd="([^"]+)"', svg))
     by_place = {(name, place): i for i, (name, place) in enumerate(placements(cells))}
 
@@ -83,6 +84,12 @@ def compare(cells: list[Cell], golden: Json) -> list[CellResult]:
                                                {"box": [x, y, x + w, y + h]}, {"box": entry["box"]}))
         results.append(result)
     return results
+
+
+def _label_boxes(svg: str) -> dict[str, tuple[float, float, float, float]]:
+    pattern = (r'<g class="wb-label" data-id="([^"]+)"[^>]*>\s*<foreignObject x="([^"]+)" y="([^"]+)" '
+               r'width="([^"]+)" height="([^"]+)"')
+    return {m[0]: tuple(float(v) for v in m[1:]) for m in re.findall(pattern, svg)}
 
 
 def _node_boxes(svg: str) -> list[dict[str, str]]:

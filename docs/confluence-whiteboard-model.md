@@ -92,12 +92,26 @@ the box), and a database too short for one line grows both ways.
   paragraphs or round lists: a box is whole 22 px lines plus padding. A
   list item is indented 0.76 em. A font scale scales text set at the base
   size, not the font size (the font is narrower at larger sizes).
+- **Weights and optical size.** Text is regular (400) and bold is 653;
+  h1 and h2 are medium (500), h3–h6 semibold (600). Atlassian Sans has an
+  optical size axis (`opsz`, 14–32), which browsers set from the font
+  size; the editor sets text of every size and scale at about 18. Both
+  were fit to the engine's widths and the reference board's drawings.
+- **Space round headings.** Above a heading, unless it comes first: 12,
+  11, 10, 8.5, 7.5 and 7.5 for h1–h6. Below one, before a paragraph or
+  another heading but not before a list: 6. Between two blocks only the
+  larger counts, as CSS margins collapse, and all of it scales with the
+  font scale (e.g. h1 then a paragraph: 32 + 6 + 22 = 60).
 - **Widths and line breaks.** Text is set by the editor's own text engine
   (`CanvasContentLayoutManager`), not the browser. `wb2canvas/text_metrics.json`
   holds each character's width as that engine sets it, per style, measured
   by `wb2canvas reference metrics`. A line holds a word only if the space
   after it fits too; a line may break after a hyphen; a word wider than the
-  line breaks anywhere.
+  line breaks anywhere. The space where a line wraps stays on the line and
+  counts when it is aligned, so a wrapped right-aligned line ends a space
+  short of the edge (CSS `white-space: break-spaces`).
+- **Baselines.** The engine puts the baseline where CSS does, half the
+  leading plus the ascent into the line (16.63 into a 22 px line).
 - **Free text** is padded 8 on each side, not scaled with the font;
   flexible text widens away from its aligned edge, fixed-width text wraps.
 - **Content box.** A shape's text goes in a content box
@@ -181,10 +195,16 @@ sorts a connector's waypoints. On a right-angled connector `axis` says which
 segment a waypoint's handle pins: 0 a vertical segment at its x, 1 a
 horizontal one at its y.
 
-A label names its connector the same way. It sits at `proportion` of the
-path's length, centred on the line (`pathOffsetPosition` 0) or beside it
-(1 left, 2 right), on a background that hides the line, with 4 units of
-padding round its text.
+A label names its connector the same way. Its point is `proportion` of
+the way along the path: the segment by length, then that share of the
+segment's curve parameter (on a Bézier, not quite that share of its
+length). It is centred on the point (`pathOffsetPosition` 0), on a
+background that hides the line, or beside the line: 1 to the left of the
+way the line runs, 2 to the right ("left" of a rightward line is above
+it). A side label's box has its corner nearest the line 12 units from the
+point along the normal and reaches away from the line from there, so on a
+horizontal line it sits 12 above or below it, centred. The box is the text
+as the engine sets it with 4 units of padding round it.
 
 ## Property dictionary
 
@@ -265,7 +285,8 @@ How a kind is drawn depends on its renderer:
 | `replicate` | another kind's drawing (`replicatedShape`), e.g. decision = diamond |
 
 **Outlines** are always 3 units wide, whatever the shape's stroke size.
-Shapes are solid or dashed (they have no dotted style). A dash pattern
+Shapes are solid or dashed: the editor draws `strokeStyle` 2 dashed and
+anything else solid, "none" (0) and "dotted" (3) included. A dash pattern
 repeats every 12 line widths, so 36 units. The editor lays it out per renderer:
 
 | Kinds | Dash layout |

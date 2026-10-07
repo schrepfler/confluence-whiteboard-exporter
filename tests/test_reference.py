@@ -79,3 +79,23 @@ def test_the_payload_renders_with_only_the_expected_warnings(caplog) -> None:
 def test_the_hash_changes_with_the_spec() -> None:
     assert spec_hash(PAYLOAD) == spec_hash(payload(spec()))
     assert spec_hash(PAYLOAD) != spec_hash(PAYLOAD[1:])
+
+
+def test_what_the_editor_draws_stays_inside_each_cell() -> None:
+    # Our layout matches the editor's drawn boxes (test_reference_geometry),
+    # so it can check that nothing grows into a neighbouring cell.
+    from wb2canvas.board import SVG_METRICS, layout, stable_ids
+
+    clip = [ClipboardElement.model_validate(e) for e in PAYLOAD]
+    board = from_dump(DumpFile.model_validate({"board": {"boardId": "1", "title": "reference", "spaceKey": "S"},
+                                               "strategy": "clipboard", "elements": clip}))
+    boxes, ids = layout(board, SVG_METRICS), stable_ids(clip)
+    n = 0
+    for i, cell in enumerate(CELLS):
+        cx, cy = (i % COLUMNS) * CELL_W, (i // COLUMNS) * CELL_H
+        for k in range(n, n + len(cell.elements) + 1):
+            if (box := boxes.get(ids[k])) is not None:
+                x, y, w, h = box
+                assert cx - CELL_W / 2 <= x and x + w <= cx + CELL_W / 2, (cell.name, box)
+                assert cy - CELL_H / 2 <= y and y + h <= cy + CELL_H / 2, (cell.name, box)
+        n += len(cell.elements) + 1

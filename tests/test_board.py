@@ -359,3 +359,15 @@ def test_a_font_scale_scales_text_set_at_the_editors_size() -> None:
     from wb2canvas.board import text_width
 
     assert SVG_METRICS.scaled(2).width("scaled") == pytest.approx(2 * text_width("scaled"))
+
+
+@pytest.mark.parametrize(("markdown", "scale", "height"), [
+    # Heights the editor's text engine gives for these blocks.
+    ("# Head\nBody", 1, 60), ("Body\n# Head", 1, 66), ("# A\n## B\n### C\nBody", 1, 131),
+    ("Body\n#### Head", 1, 53.5), ("###### A\n##### B", 1, 43.5), ("- a\n# Head", 1, 66),
+    ("## Head\n- a", 1, 49), ("# Head\nBody", 2, 120),
+])
+def test_headings_are_spaced_as_in_the_editor(markdown: str, scale: float, height: float) -> None:
+    from wb2canvas.board import _wrapped_height
+
+    assert _wrapped_height(markdown, 1000, SVG_METRICS.scaled(scale), pad_h=0) == pytest.approx(height)

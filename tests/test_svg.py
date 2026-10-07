@@ -62,13 +62,15 @@ def test_shapes_are_drawn_from_the_editors_definitions() -> None:
     group = _shape_group(svg)
     assert 'data-kind="3"' in group and "<rect" not in group
     # The rounded corner keeps the editor's fixed 35.2 radius, whatever the
-    # box: the top-left corner of the 200x100 box runs from (0, 35.2) to (35.2, 0).
-    assert 'd="M 0 35.2 C 0 15.8 15.8 0 35.2 0 L 164.8 0 C' in group
+    # box. The outline is drawn inside the box (its outer edge is the box
+    # edge), so the top-left corner of the 200x100 box runs from (1.5, 36.7)
+    # to (36.7, 1.5).
+    assert 'd="M 1.5 36.7 C 1.5 17.3 17.3 1.5 36.7 1.5 L 163.3 1.5 C' in group
 
 
 def test_a_sharp_rectangle_has_square_corners() -> None:
     group = _shape_group(_svg_for([{"type": "shape", "shape": 0, "position": {"x": 0, "y": 0}, "size": {"x": 10, "y": 10}}]))
-    assert 'd="M -5 -5 L 5 -5 L 5 5 L -5 5 L -5 -5 Z"' in group
+    assert 'd="M -3.5 -3.5 L 3.5 -3.5 L 3.5 3.5 L -3.5 3.5 L -3.5 -3.5 Z"' in group, "inside the box"
 
 
 def test_a_kind_that_reuses_a_drawing_is_drawn_with_it() -> None:
@@ -240,16 +242,19 @@ def test_connector_routing_follows_its_presentation(presentation, routing) -> No
 def test_shape_outlines_are_three_units_wide_in_every_style() -> None:
     def outline(style: int) -> str | None:
         group = _shape_group(_svg_for([
-            {"type": "shape", "position": {"x": 0, "y": 0}, "size": {"x": 144, "y": 72}, "strokeStyle": style}
+            {"type": "shape", "position": {"x": 0, "y": 0}, "size": {"x": 147, "y": 75}, "strokeStyle": style}
         ]))
         m = re.search(r'<path data-part="1" data-sub="0"[^>]*>', group)
         return m and m.group(0)
 
-    assert outline(0) is None, "no outline"
-    assert 'stroke-width="3"' in outline(1) and "dasharray" not in outline(1)
+    # The editor draws a shape's outline dashed, or else solid: "none" (0)
+    # and "dotted" (3) are drawn solid (seen on the reference board).
+    for solid in (0, 1, 3):
+        assert 'stroke-width="3"' in outline(solid) and "dasharray" not in outline(solid)
     dashed = outline(2)
     assert 'stroke-width="3"' in dashed and 'stroke-linecap="round"' in dashed
-    # A sharp rectangle's edges start and end mid-dash: core 18, gap 18.
+    # A sharp rectangle's edges (144 and 72, drawn inside the box) start and
+    # end mid-dash: core 18, gap 18.
     assert re.search(r'stroke-dasharray="7.5,18,18,18,18,', dashed)
 
 
@@ -286,9 +291,27 @@ def test_a_connector_label_sits_on_the_line_above_every_connector() -> None:
     svg = _svg_for(_labelled())
     group = re.search(r'<g class="wb-label".*?</g>', svg).group(0)
     assert "Calls" in group and "color:#292A2E" in group
-    # Halfway along the straight line from (50, 0) to (250, 200).
-    assert 'data-x="150" data-y="100"' in group
+    # Centred halfway along the straight line from (50, 0) to (250, 200).
+    x, y, w, h = _label_box(group)
+    assert (x + w / 2, y + h / 2) == pytest.approx((150, 100), abs=0.06)
     assert svg.index('class="wb-label"') > svg.rindex('class="wb-edge"'), "drawn after the connectors"
+
+
+def _label_box(group: str) -> tuple[float, ...]:
+    m = re.search(r'<foreignObject x="([^"]+)" y="([^"]+)" width="([^"]+)" height="([^"]+)"', group)
+    return tuple(float(v) for v in m.groups())
+
+
+def test_a_side_label_keeps_its_nearest_corner_twelve_from_the_line() -> None:
+    # The line runs down and right at 45 degrees through (150, 100): "left"
+    # of it is up and right, "right" of it down and left (as on the
+    # reference board). The box's corner nearest the line is 12 away along
+    # the normal; the box reaches away from the line from there.
+    d = 12 / 2 ** 0.5
+    x, y, w, h = _label_box(_svg_for(_labelled(pathOffsetPosition=1)))
+    assert (x, y + h) == pytest.approx((150 + d, 100 - d), abs=0.06)
+    x, y, w, h = _label_box(_svg_for(_labelled(pathOffsetPosition=2)))
+    assert (x + w, y) == pytest.approx((150 - d, 100 + d), abs=0.06)
 
 
 def test_a_label_of_no_connector_is_reported(caplog) -> None:

@@ -18,15 +18,16 @@ import base64
 import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from .board import CAPS, ROUTINGS, STROKE_STYLES
-from .shapes import KIND_NAMES
+from .shapes import KIND_NAMES, text_area
 
 Json = dict[str, Any]
 
-CELL_W, CELL_H = 480.0, 360.0  # one variation per cell
+CELL_W, CELL_H = 480.0, 420.0  # one variation per cell, with room for what grows
 COLUMNS = 10
 CAPTION_Y = -CELL_H / 2 + 24  # captions sit along the top of their cell
 
@@ -171,9 +172,14 @@ def spec() -> list[Cell]:
     cells: list[Cell] = []
     add = lambda name, *els: cells.append(Cell(name, list(els)))  # noqa: E731
 
-    # Every shape kind, with its name as text.
+    # Every shape kind, with its name as text. Drawings with a label below
+    # are drawn at their own aspect ratio, so they get a narrower box.
     for kind, name in KIND_NAMES.items():
-        add(f"shape/{kind} {name}", shape(kind, 0, 20, 200, 120, name))
+        area = text_area(kind, 100)
+        if area is not None and area.label_below:
+            add(f"shape/{kind} {name}", shape(kind, 0, -30, 100, 100, name))
+        else:
+            add(f"shape/{kind} {name}", shape(kind, 0, 20, 200, 120, name))
     for kind in (1, 2, 3, 4, 13):
         add(f"shape/{kind} wide", shape(kind, 0, 20, 360, 90, "wide"))
         add(f"shape/{kind} tall", shape(kind, 0, 20, 120, 220, "tall"))
@@ -198,9 +204,9 @@ def spec() -> list[Cell]:
                                                               heading("Heading 3", 3), para("Body"))))
     add("text/list", shape(1, 0, 20, 280, 200, content=doc(para("Title", bold=True),
                                                            bullets("first item", "second item", "third"))))
-    long = "This text is far too long for its box, so the editor grows the box downward to fit it"
+    long = "Text too long for its box, so the box grows to fit it"
     for kind in (1, 2, 3, 4):
-        add(f"text/overflow {KIND_NAMES[kind]}", shape(kind, 0, -40, 180, 70, long))
+        add(f"text/overflow {KIND_NAMES[kind]}", shape(kind, 0, -60, 240, 60, long))
     add("text/empty", shape(3, 0, 20, 220, 120))
 
     # Free text.
@@ -269,7 +275,7 @@ def payload(cells: list[Cell]) -> list[Json]:
         base = len(out)
         for e in cell.elements:
             out.append(_placed(e, cx, cy, base))
-        out.append(text(cx - CELL_W / 2 + 16, cy + CAPTION_Y, doc(para(cell.name)), color=LINE))
+        out.append(text(cx - CELL_W / 2 + 24, cy + CAPTION_Y, doc(para(cell.name)), color=LINE))
     return out
 
 
@@ -289,6 +295,17 @@ def _placed(e: Json, dx: float, dy: float, base: int) -> Json:
         if e.get(key):
             e[key] = f"ref-{int(e[key].split('-')[1]) + base}"
     return e
+
+
+def cell_rects(cells: list[Cell]) -> dict[str, tuple[float, float, float, float]]:
+    """Each cell's rectangle (x, y, w, h) in the payload's coordinates."""
+    return {cell.name: ((n % COLUMNS) * CELL_W - CELL_W / 2, (n // COLUMNS) * CELL_H - CELL_H / 2, CELL_W, CELL_H)
+            for n, cell in enumerate(cells)}
+
+
+def cell_slug(name: str) -> str:
+    """A file name for a cell: "connector/end arrow" -> "connector-end-arrow"."""
+    return re.sub(r"[^a-z0-9.]+", "-", name.lower()).strip("-")
 
 
 def placements(cells: list[Cell]) -> list[tuple[str, int | str]]:
@@ -317,7 +334,7 @@ def match_board(cells: list[Cell], board: dict[str, Json], centres: dict[str, tu
     """
     elements = payload(cells)
     where = placements(cells)
-    offset = _paste_offset(elements, board, centres)
+    offset = paste_offset(elements, board, centres)
     found: dict[int, str] = {}
     by_type: dict[str, list[str]] = {}
     for eid, el in board.items():
@@ -374,7 +391,7 @@ def match_board(cells: list[Cell], board: dict[str, Json], centres: dict[str, tu
     return {"spec_hash": spec_hash(elements), "cells": cells_out}
 
 
-def _paste_offset(elements: list[Json], board: dict[str, Json],
+def paste_offset(elements: list[Json], board: dict[str, Json],
                   centres: dict[str, tuple[float, float]]) -> tuple[float, float]:
     """How far the paste moved everything: the most common difference
     between where a text element was put and where the board has it."""

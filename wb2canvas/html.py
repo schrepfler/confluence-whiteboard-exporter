@@ -19,11 +19,12 @@ from .shapes import (
     EDGE_EXTRA,
     RUN_DASH,
     RUN_PHASE,
+    SHAPE_LINE_WIDTH,
     TEXTURE_WINDOW,
     resolve,
     stretching_commands,
 )
-from .svg import svg_document, warn_placeholders
+from .svg import LABEL_GAP, svg_document, warn_placeholders
 
 _PAGE_CSS = (
     "html,body{margin:0;height:100%;overflow:hidden;background:#fff;}"
@@ -42,6 +43,8 @@ def render_html(board: Board, shape_map: dict[int, int] | None = None) -> str:
     script = (
         _VIEWER_JS.replace("__ELBOW_STUB__", str(ELBOW_STUB))
         .replace("__BEND_RADIUS__", str(BEND_RADIUS))
+        .replace("__SHAPE_LINE_WIDTH__", str(SHAPE_LINE_WIDTH))
+        .replace("__LABEL_GAP__", str(LABEL_GAP))
         .replace("__TENSION__", str(TENSION))
         .replace("__SHAPES__", json.dumps(drawings, separators=(",", ":")))
         .replace("__DASH__", json.dumps({
@@ -72,7 +75,7 @@ _VIEWER_JS = r"""
 (function () {
   if (typeof document === 'undefined') return;
   var TENSION = __TENSION__, STUB = __ELBOW_STUB__, BEND_RADIUS = __BEND_RADIUS__;
-  var SHAPES = __SHAPES__, DASH = __DASH__;
+  var SHAPES = __SHAPES__, DASH = __DASH__, SHAPE_LINE_WIDTH = __SHAPE_LINE_WIDTH__, LABEL_GAP = __LABEL_GAP__;
   var CORNER_COS = Math.cos(10 * Math.PI / 180);
   var SIDE_ANGLE = { right: 0, bottom: Math.PI / 2, left: Math.PI, top: -Math.PI / 2 };
   var SIDE_DIR = { right: '+x', left: '-x', bottom: '+y', top: '-y' };
@@ -113,18 +116,21 @@ _VIEWER_JS = r"""
         tEnd: { ext: ends[2], hide: !!ends[3] }
       });
     }
-    // Labels ride along their connector at the same proportion of its length.
+    // Labels ride along their connector, at the same proportion of it.
     var edgeById = new Map(edgeList.map(function (e) { return [e.path.getAttribute('data-id'), e]; }));
     svg.querySelectorAll('g.wb-label').forEach(function (g) {
-      var e = edgeById.get(g.getAttribute('data-edge'));
-      if (e) e.labels.push({ group: g, p: parseFloat(g.getAttribute('data-p')),
-                             x: parseFloat(g.getAttribute('data-x')), y: parseFloat(g.getAttribute('data-y')) });
+      var e = edgeById.get(g.getAttribute('data-edge')), fo = g.querySelector('foreignObject');
+      if (!e || !fo) return;
+      var num = function (a) { return parseFloat(fo.getAttribute(a)); };
+      e.labels.push({ group: g, p: parseFloat(g.getAttribute('data-p')), side: g.getAttribute('data-side') || 'centre',
+                      w: num('width'), h: num('height'), cx: num('x') + num('width') / 2, cy: num('y') + num('height') / 2 });
     });
     autoFit();
     redrawAllEdges();
     enablePanZoom(svg);
     // For tests: the routines the viewer shares with the exporter.
-    window.wb2canvasViewer = { route: route, pathData: pathData, subpaths: subpaths, subpathD: subpathD, dashLayout: dashLayout };
+    window.wb2canvasViewer = { route: route, pathData: pathData, subpaths: subpaths, subpathD: subpathD, dashLayout: dashLayout,
+                               pointAt: pointAt, labelCentre: labelCentre };
 
     function autoFit() {
       // Grow shapes whose text overflows by re-resolving their drawing for the
@@ -147,7 +153,9 @@ _VIEWER_JS = r"""
         var w = parseFloat(g.getAttribute('data-w'));
         fo.setAttribute('height', foH + delta);
         g.querySelectorAll('path[data-part]').forEach(function (p) {
-          var subs = subpaths(shape.parts[+p.getAttribute('data-part')], x, y, w, h, shape.dashMode);
+          // The outline is drawn inside the box, as in svg.py.
+          var inset = SHAPE_LINE_WIDTH / 2;
+          var subs = subpaths(shape.parts[+p.getAttribute('data-part')], x + inset, y + inset, w - 2 * inset, h - 2 * inset, shape.dashMode);
           if (!p.hasAttribute('data-sub')) {
             p.setAttribute('d', subs.map(subpathD).join(' '));
             return;
@@ -367,14 +375,41 @@ _VIEWER_JS = r"""
                 box: [sb.x, sb.y, sb.w, sb.h] };
       var t = { p: [tb.x + tb.w * e.ta.left, tb.y + tb.h * e.ta.top], side: sideOf(e.ta), ext: e.tEnd.ext, hide: e.tEnd.hide,
                 box: [tb.x, tb.y, tb.w, tb.h] };
-      e.path.setAttribute('d', pathData(route(e.routing, s, t, e.waypoints, e.axes, e.stroke)));
-      if (e.labels.length) {
-        var total = e.path.getTotalLength();
-        e.labels.forEach(function (lb) {
-          var pt = e.path.getPointAtLength(lb.p * total);
-          lb.group.setAttribute('transform', 'translate(' + (pt.x - lb.x) + ' ' + (pt.y - lb.y) + ')');
-        });
+      var r = route(e.routing, s, t, e.waypoints, e.axes, e.stroke);
+      e.path.setAttribute('d', pathData(r));
+      e.labels.forEach(function (lb) {
+        var c = labelCentre(pointAt(r, lb.p), lb.side, lb.w, lb.h);
+        lb.group.setAttribute('transform', 'translate(' + (c[0] - lb.cx) + ' ' + (c[1] - lb.cy) + ')');
+      });
+    }
+    // The point a label sits at and the path's direction there, as
+    // connectors.point_at finds them: the segment by length, then that share
+    // of the segment's curve parameter.
+    function pointAt(r, p) {
+      var pieces = [], cur = r.start;
+      r.segs.forEach(function (seg) { pieces.push([cur].concat(seg)); cur = seg[seg.length - 1]; });
+      var lengths = pieces.map(segLength);
+      var remaining = Math.max(0, Math.min(1, p)) * lengths.reduce(function (a, b) { return a + b; }, 0);
+      for (var i = 0; i < pieces.length; i++) {
+        if (remaining > lengths[i] && i < pieces.length - 1) { remaining -= lengths[i]; continue; }
+        var q = pieces[i], t = lengths[i] ? Math.min(remaining / lengths[i], 1) : 0, u = 1 - t;
+        if (q.length === 2) {
+          return { p: [q[0][0] + (q[1][0] - q[0][0]) * t, q[0][1] + (q[1][1] - q[0][1]) * t],
+                   angle: Math.atan2(q[1][1] - q[0][1], q[1][0] - q[0][0]) };
+        }
+        var at = function (k) { return u * u * u * q[0][k] + 3 * u * u * t * q[1][k] + 3 * u * t * t * q[2][k] + t * t * t * q[3][k]; };
+        var dk = function (k) { return 3 * u * u * (q[1][k] - q[0][k]) + 6 * u * t * (q[2][k] - q[1][k]) + 3 * t * t * (q[3][k] - q[2][k]); };
+        return { p: [at(0), at(1)], angle: Math.atan2(dk(1), dk(0)) };
       }
+      return { p: r.start, angle: 0 };
+    }
+    // Where a label's box is centred: on its point, or beside the line with
+    // the corner nearest it LABEL_GAP away, as svg._render_label places it.
+    function labelCentre(pt, side, w, h) {
+      if (side !== 'left' && side !== 'right') return pt.p;
+      var sign = side === 'left' ? 1 : -1, nx = Math.sin(pt.angle) * sign, ny = -Math.cos(pt.angle) * sign;
+      var sgn = function (v) { return Math.abs(v) < 1e-9 ? 0 : v > 0 ? 1 : -1; };
+      return [pt.p[0] + nx * LABEL_GAP + sgn(nx) * w / 2, pt.p[1] + ny * LABEL_GAP + sgn(ny) * h / 2];
     }
     function bounds(nd) {
       if (!nd) return null;

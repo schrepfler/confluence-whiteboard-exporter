@@ -20,6 +20,7 @@ wb2canvas = "wb2canvas.cli:run"
 
 [dependency-groups]
 dev = [
+    "pillow>=12.3.0",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "respx>=0.21.0",

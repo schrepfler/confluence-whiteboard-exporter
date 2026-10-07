@@ -138,5 +138,31 @@
     return out;
   }
 
-  globalThis.__wb2canvasGeometry = { readAll, measure };
+  // The camera: which part of the board the canvas shows, and at what
+  // scale. A canvas pixel is (board point - box corner) * scale.
+  async function readCamera(timeoutMs = 5000) {
+    const world = await captureWorld();
+    const sys = system(world, 'InputCameraSystem');
+    const T = componentTypes(world);
+    return new Promise((resolve, reject) => {
+      const original = sys.execute;
+      const timer = setTimeout(() => { sys.execute = original; reject(new Error('no frame ran')); }, timeoutMs);
+      sys.execute = function (...args) {
+        sys.execute = original;
+        clearTimeout(timer);
+        const result = original.apply(this, args);
+        try {
+          const camera = this.cameras.current[0];
+          const box = camera.read(T.CameraBoundingBoxComponent);
+          resolve({ left: box.left, top: box.top, right: box.right, bottom: box.bottom,
+                    scale: camera.read(T.CameraScaleComponent).scale });
+        } catch (err) {
+          reject(err);
+        }
+        return result;
+      };
+    });
+  }
+
+  globalThis.__wb2canvasGeometry = { readAll, measure, readCamera };
 })();

@@ -257,8 +257,10 @@ def _curved(start: End, end: End, waypoints: tuple[Point, ...], stroke_size: int
 
 
 def point_at(path: Route, proportion: float) -> tuple[Point, float]:
-    """The point `proportion` (0-1) of the way along `path`, by length, and
-    the path's direction there (an angle)."""
+    """The point `proportion` (0-1) of the way along `path`, and the path's
+    direction there (an angle), found as the editor places labels: the
+    segment by length, then that share of the segment's curve parameter (on
+    a curve not quite that share of its length)."""
     pieces: list[tuple[Point, ...]] = []
     cur = path.start
     for seg in path.segments:
@@ -270,7 +272,7 @@ def point_at(path: Route, proportion: float) -> tuple[Point, float]:
         if remaining > length and i < len(pieces) - 1:
             remaining -= length
             continue
-        t = _t_at_length(piece, remaining) if length else 0.0
+        t = min(remaining / length, 1.0) if length else 0.0
         return _eval(piece, t), _angle_at(piece, t)
     return path.start, 0.0
 
@@ -283,20 +285,6 @@ def _seg_length(piece: tuple[Point, ...], steps: int = 32) -> float:
         q = _eval(piece, i / steps)
         total, prev = total + _dist(prev, q), q
     return total
-
-
-def _t_at_length(piece: tuple[Point, ...], length: float, steps: int = 32) -> float:
-    if len(piece) == 2:
-        full = _dist(*piece)
-        return length / full if full else 0.0
-    walked, prev = 0.0, piece[0]
-    for i in range(1, steps + 1):
-        q = _eval(piece, i / steps)
-        step = _dist(prev, q)
-        if walked + step >= length:
-            return (i - 1 + ((length - walked) / step if step else 0.0)) / steps
-        walked, prev = walked + step, q
-    return 1.0
 
 
 def _eval(piece: tuple[Point, ...], t: float) -> Point:

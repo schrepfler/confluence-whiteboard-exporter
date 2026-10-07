@@ -83,7 +83,8 @@ def test_auto_fit_grows_boxes_whose_text_overflows(browser, tmp_path: Path) -> N
     before = float(re.search(r'data-id="shape-A"[^>]*data-h="([^"]+)"', html).group(1))
     data_h = float(node.get_attribute("data-h"))
     assert data_h > before
-    assert outline.evaluate("p => p.getBBox().height") == pytest.approx(data_h, abs=0.5)
+    # Its outline is drawn inside the box, half a line width in.
+    assert outline.evaluate("p => p.getBBox().height") == pytest.approx(data_h - 3, abs=0.5)
     assert errors == []
 
 

@@ -40,6 +40,7 @@ CAPS = {
     11: "cross", 12: "cross-crows-foot", 13: "crows-foot", 14: "circle-crows-foot",
 }
 STROKE_STYLES = {0: "none", 1: "solid", 2: "dashed", 3: "dotted"}
+SHAPE_OUTLINES = {2: "dashed"}  # a shape's outline is dashed or else solid, "none" and "dotted" included
 ROUTINGS = {1: "straight", 2: "dynamic", 3: "curved"}
 _VALIGN = {0: "top", 1: "middle", 2: "bottom"}  # observed: shapes use 1 (middle)
 _HALIGN = frozenset({"left", "center", "right"})
@@ -162,6 +163,7 @@ class Label:
     font_scale: float = 1.0
     proportion: float = 0.5
     side: str = "centre"  # on the line, or beside it ("left"/"right" of travel)
+    id: str = ""  # the label's own element id, if it has one
 
     @cached_property
     def markdown(self) -> str:
@@ -281,6 +283,7 @@ def _from_clipboard(
                 font_scale=_scale(e.fontScale),
                 proportion=e.proportion if e.proportion is not None else 0.5,
                 side=losses.enum(LABEL_SIDES, e.pathOffsetPosition, "label side", "centre"),
+                id=ids[i],
             ))
         elif node := _clip_node(ids[i], e, media, losses):
             nodes.append(node)
@@ -305,6 +308,12 @@ def _attach_waypoints(edges: dict[Any, Edge], bends: dict[Any, list[tuple[float,
             edge.waypoint_axes = tuple(a for _, _, a in ordered)
 
 
+def _shape_outline(value: object, losses: _Losses) -> str:
+    """How the editor draws a shape's outline: dashed, or else solid."""
+    losses.enum(STROKE_STYLES, value, "stroke style", "solid")
+    return SHAPE_OUTLINES.get(value, "solid") if isinstance(value, int) else "solid"
+
+
 def _clip_node(nid: str, e: ClipboardElement, media: dict[str, str], losses: _Losses) -> Node | None:
     if e.type == "shape" and e.position:
         x, y, w, h = _shape_box(e)
@@ -314,7 +323,7 @@ def _clip_node(nid: str, e: ClipboardElement, media: dict[str, str], losses: _Lo
             x=x, y=y, w=w, h=h,
             fill=Rgb.from_vector(e.color) if e.fillEnabled else None,
             stroke=Rgb.from_vector(e.strokeColor) or Rgb.from_vector(e.color),
-            stroke_style=losses.enum(STROKE_STYLES, e.strokeStyle, "stroke style", "solid"),
+            stroke_style=_shape_outline(e.strokeStyle, losses),
             stroke_width=float(e.stroke or 1),
             shape_kind=e.shape,
             align=e.alignment if e.alignment in _HALIGN else "center",
@@ -551,7 +560,7 @@ def _from_fiber(fd: FiberDump, media: dict[str, str], losses: _Losses) -> tuple[
                 id=eid, kind=Kind.SHAPE, x=x, y=y, w=w, h=h,
                 fill=fill_rgb if raw.get("fe") else None,
                 stroke=Rgb.from_float32_be(raw.get("stc")) or fill_rgb,
-                stroke_style=losses.enum(STROKE_STYLES, raw.get("sts"), "stroke style", "solid"),
+                stroke_style=_shape_outline(raw.get("sts"), losses),
                 stroke_width=_num(raw.get("st"), 1.0),
                 shape_kind=raw.get("sh") if isinstance(raw.get("sh"), int) else None,
                 align=_FIBER_HALIGN.get(raw.get("a", 0), "center"),
@@ -580,11 +589,20 @@ def _from_fiber(fd: FiberDump, media: dict[str, str], losses: _Losses) -> tuple[
 
 
 # The editor's whiteboard text (defaultTextSpacing): paragraphs at 11.6/.75
-# px on a 22px line; headings at their own sizes (font px, line px), set
-# semibold. A list item is indented by LIST_INDENT_EM of the font size.
+# px on a 22px line; headings at their own sizes (font px, line px) and
+# weights. A list item is indented by LIST_INDENT_EM of the font size.
 EDITOR_FONT_PX = 11.6 / 0.75
 EDITOR_LINE_PX = 22.0
 EDITOR_HEADINGS = {1: (27, 32), 2: (23, 27), 3: (18, 23), 4: (16, 23), 5: (14, 18), 6: (13, 18)}
+# Weights, from the editor's text widths and drawings: bold is 653, as in
+# Atlassian's type scale; the two largest headings are medium.
+EDITOR_BOLD_WEIGHT = 653
+EDITOR_HEADING_WEIGHTS = {1: 500, 2: 500, 3: 600, 4: 600, 5: 600, 6: 600}
+# Space round headings, px: above one unless it comes first, and below one
+# before a paragraph or another heading (not before a list). Between two
+# blocks only the larger counts, as with CSS margins.
+EDITOR_HEADING_ABOVE = {1: 12.0, 2: 11.0, 3: 10.0, 4: 8.5, 5: 7.5, 6: 7.5}
+EDITOR_HEADING_BELOW = 6.0
 LIST_INDENT_EM = 0.76
 
 
@@ -622,6 +640,14 @@ class TextMetrics:
         if heading and self.font_px is not None:
             return self.line_h * EDITOR_HEADINGS[heading][1] / EDITOR_LINE_PX
         return self.line_h
+
+    def gap(self, before: int | None, heading: int, is_item: bool) -> float:
+        """The space between a block and the one `before` it (its heading
+        level, 0 for none; None if this block comes first)."""
+        if before is None or self.font_px is None:
+            return 0.0
+        below = EDITOR_HEADING_BELOW if before and not is_item else 0.0
+        return max(below, EDITOR_HEADING_ABOVE.get(heading, 0.0)) * self.scale
 
     @property
     def indent(self) -> float:
@@ -741,13 +767,15 @@ def _text_line(raw: str) -> tuple[str, bool, bool, int]:
 def _unwrapped_bounds(markdown: str, m: TextMetrics, pad_w: float | None = None,
                       pad_h: float | None = None) -> tuple[float, float]:
     width, height = 0.0, 0.0
+    before: int | None = None
     for raw in markdown.splitlines():
         text, is_item, bold, heading = _text_line(raw)
         if not text:
             height += m.para_gap * m.line_h
             continue
         width = max(width, (m.indent if is_item else 0.0) + m.width(text, bold, heading))
-        height += m.line_height(heading)
+        height += m.gap(before, heading, is_item) + m.line_height(heading)
+        before = heading
     return width + _or(pad_w, m.pad_w), height + _or(pad_h, m.pad_h)
 
 
@@ -761,13 +789,15 @@ def _wrapped_height(markdown: str, width: float, m: TextMetrics, pad_w: float | 
     (a word wider than the line breaks anywhere, as the editor's does)."""
     usable = max(m.char_w * 4, width - _or(pad_w, m.pad_w))
     height = 0.0
+    before: int | None = None
     for raw in markdown.splitlines():
         text, is_item, bold, heading = _text_line(raw)
         if not text:
             height += m.para_gap * m.line_h
             continue
         lines = _wrapped_lines(text, usable - (m.indent if is_item else 0.0), m, bold, heading)
-        height += lines * m.line_height(heading)
+        height += m.gap(before, heading, is_item) + lines * m.line_height(heading)
+        before = heading
     return height + _or(pad_h, m.pad_h)
 
 

@@ -14,7 +14,7 @@ import math
 from collections import Counter
 
 from .adf import _xml_escape
-from .board import EDITOR_FONT_PX, EDITOR_HEADINGS, EDITOR_LINE_PX, LIST_INDENT_EM, SVG_METRICS, Board, Box, Edge, Kind, Label, Node, Point, Rgb, anchor_point, anchor_side, layout
+from .board import EDITOR_BOLD_WEIGHT, EDITOR_FONT_PX, EDITOR_HEADING_ABOVE, EDITOR_HEADING_BELOW, EDITOR_HEADING_WEIGHTS, EDITOR_HEADINGS, EDITOR_LINE_PX, LIST_INDENT_EM, SVG_METRICS, Board, Box, Edge, Kind, Label, Node, Point, Rgb, anchor_point, anchor_side, layout
 from .connectors import ARROWHEAD_SCALE, ARROWHEADS, End, Route, end_stub, point_at, route, thickness
 from .palette import drawn
 from .shapes import DASH_PERIOD, DASH_SHARE, SHAPE_LINE_WIDTH, Section, dash_layout, drawing, fmt, kind_label, resolve
@@ -27,10 +27,16 @@ MARGIN = 60
 BASE_FONT_PX = EDITOR_FONT_PX  # the editor's text spacing, shared with the layout model
 LINE_HEIGHT = EDITOR_LINE_PX / EDITOR_FONT_PX
 TEXT_PADDING = 12.0  # round a shape's text, inside its content box; grows with the font scale
+# Atlassian Sans has an optical size axis, which browsers set from the font
+# size. The editor sets text of every size and scale at one optical size,
+# about 18 (fit to its drawings on the reference board).
+OPTICAL_SIZE = 18
 HEADINGS = EDITOR_HEADINGS
 FONT_FAMILY = ('"Atlassian Sans", ui-sans-serif, -apple-system, BlinkMacSystemFont, '
                '"Segoe UI", Ubuntu, "Helvetica Neue", sans-serif')  # the editor's stack
 LABEL_PADDING = 4.0  # round a connector label's text, as in the editor
+LABEL_GAP = 12.0  # between a side label's box and its line, as in the editor
+OUTLINE_INSET = SHAPE_LINE_WIDTH / 2  # how far inside the box a shape's outline is centred
 
 
 class _Bounds:
@@ -107,7 +113,7 @@ def svg_document(board: Board, shape_map: dict[int, int] | None = None) -> tuple
             f'<svg xmlns="http://www.w3.org/2000/svg" '
             f'viewBox="{vb_x} {vb_y} {vb_w} {vb_h}" width="{vb_w}" height="{vb_h}" '
             f"font-family='{FONT_FAMILY}' "
-            f'font-size="{fmt(BASE_FONT_PX)}">',
+            f'font-size="{fmt(BASE_FONT_PX)}" style="font-variation-settings:&quot;opsz&quot; {OPTICAL_SIZE}">',
             _defs(caps),
             _STYLE,
             *node_parts,
@@ -156,11 +162,13 @@ def _marker(name: str, stroke_size: int) -> str:
 # .node-text fills its foreignObject and clips; .node-body is centred with
 # auto margins, which (unlike justify-content:center) collapse to zero when
 # content overflows, so overflow always grows downward and stays measurable.
+# As in the editor, the space where a line wraps stays on the line: it must
+# fit there, and it counts when the line is aligned (break-spaces).
 _STYLE = (
     "<style>"
     f".node-text{{display:flex;flex-direction:column;margin:0;padding:{fmt(TEXT_PADDING)}px;"
     f"color:{DEFAULT_STROKE};line-height:{LINE_HEIGHT:.4f};height:100%;width:100%;"
-    "box-sizing:border-box;overflow:hidden;}"
+    "box-sizing:border-box;overflow:hidden;white-space:break-spaces;}"
     ".node-free{display:block;height:auto;width:auto;padding:0;overflow:visible;}"
     ".node-body{margin:0;overflow-wrap:anywhere;}"
     ".va-top{margin-bottom:auto;}"
@@ -172,9 +180,14 @@ _STYLE = (
     f".node-body ul,.node-body ol{{margin:0 0 0 {LIST_INDENT_EM}em;padding:0;text-align:left;}}"
     ".node-body li{margin:0;}"
     ".node-body li>p{margin:0;}"
-    ".node-body strong{font-weight:600;}"
-    + "".join(f".node-body h{n}{{font-size:{size / BASE_FONT_PX:.4f}em;line-height:{line / size:.4f};margin:0;font-weight:600;}}"
+    f".node-body strong{{font-weight:{EDITOR_BOLD_WEIGHT};}}"
+    + "".join(f".node-body h{n}{{font-size:{size / BASE_FONT_PX:.4f}em;line-height:{line / size:.4f};"
+              f"margin:{EDITOR_HEADING_ABOVE[n] / size:.4f}em 0 {EDITOR_HEADING_BELOW / size:.4f}em;"
+              f"font-weight:{EDITOR_HEADING_WEIGHTS[n]};}}"
               for n, (size, line) in HEADINGS.items())
+    # The space round headings (EDITOR_HEADING_ABOVE): none at either end, nor before a list.
+    + ".node-body>:first-child{margin-top:0;}.node-body>:last-child{margin-bottom:0;}"
+    + ",".join(f".node-body h{n}:has(+ul),.node-body h{n}:has(+ol)" for n in HEADINGS) + "{margin-bottom:0;}"
     + ".wb-label-box{display:flex;align-items:center;justify-content:center;width:100%;height:100%;}"
     f".wb-label-box>.node-body{{background:#FFFFFF;padding:0 4px;line-height:{LINE_HEIGHT:.4f};white-space:nowrap;text-align:center;}}"
     "</style>"
@@ -228,11 +241,15 @@ def _shape(node: Node, box: Box, smap: dict[int, int]) -> str:
     if w <= 0 or h <= 0:
         return ""
     shape = drawing(node.shape_kind, x, y, w, h, smap)
+    # The editor draws the outline inside the box: its outer edge is the box
+    # edge. The text area stays the whole box's.
+    i = OUTLINE_INSET
+    outline = drawing(node.shape_kind, x + i, y + i, max(w - 2 * i, 0.0), max(h - 2 * i, 0.0), smap)
     colours = {
         "fill": node.fill.hex if node.fill else "transparent",
         "stroke": _hex(node.stroke, DEFAULT_STROKE),
     }
-    markup = "".join(_section(i, sec, colours, node.stroke_style) for i, sec in enumerate(shape.sections))
+    markup = "".join(_section(i, sec, colours, node.stroke_style) for i, sec in enumerate(outline.sections))
     if not node.html or shape.text is None or shape.text[2] <= 0 or shape.text[3] <= 0:
         return markup
     tx, ty, tw, th = shape.text
@@ -355,27 +372,34 @@ def _render_label(edge: Edge, label: Label, path: Route, bounds: _Bounds) -> str
     """Text on the line, on a background that hides the line behind it, or
     beside the line for a "left"/"right" label."""
     (px, py), angle = point_at(path, label.proportion)
-    on_path = px, py  # what the viewer re-finds when the connector moves
     lines = [ln for ln in label.markdown.splitlines() if ln.strip()] or [" "]
     m = SVG_METRICS.scaled(label.font_scale)
-    w = max(len(ln) for ln in lines) * m.char_w + 2 * LABEL_PADDING
+    w = max(m.width(ln) for ln in lines) + 2 * LABEL_PADDING
     h = len(lines) * m.line_h + 2 * LABEL_PADDING
     if label.side != "centre":
-        # The editor puts "left" below a rightward line and "right" above it
-        # (screen coordinates run downward).
-        d = (h / 2 + LABEL_PADDING) * (1 if label.side == "left" else -1)
-        px, py = px - math.sin(angle) * d, py + math.cos(angle) * d
+        # To the left or right of the way the line runs ("left" of a
+        # rightward line is above it: screen coordinates run downward). The
+        # box's corner nearest the line is LABEL_GAP from the point, along
+        # the normal, and the box reaches away from the line from there.
+        sign = 1 if label.side == "left" else -1
+        nx, ny = math.sin(angle) * sign, -math.cos(angle) * sign
+        px += nx * LABEL_GAP + _sign(nx) * w / 2
+        py += ny * LABEL_GAP + _sign(ny) * h / 2
     x, y = px - w / 2, py - h / 2
     bounds.box(x, y, w, h)
     colour = _hex(label.color, DEFAULT_STROKE)
     return (
-        f'<g class="wb-label" data-edge="{_xml_escape(edge.id)}" data-p="{_fraction(label.proportion)}" '
-        f'data-x="{fmt(on_path[0])}" data-y="{fmt(on_path[1])}">'
+        f'<g class="wb-label" data-id="{_xml_escape(label.id)}" data-edge="{_xml_escape(edge.id)}" '
+        f'data-p="{_fraction(label.proportion)}" data-side="{label.side}">'
         f'<foreignObject x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}" style="overflow:visible">'
         f'<div xmlns="http://www.w3.org/1999/xhtml" class="wb-label-box">'
         f'<div class="node-body" style="color:{colour};font-size:{fmt(BASE_FONT_PX * label.font_scale)}px">'
         f"{label.html}</div></div></foreignObject></g>"
     )
+
+
+def _sign(v: float) -> int:
+    return 0 if abs(v) < 1e-9 else 1 if v > 0 else -1
 
 
 def path_data(path: Route) -> str:
