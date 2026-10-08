@@ -170,8 +170,8 @@ Each element type declares which box it uses
 | `pathWaypoint` | YPathWaypoint | Bend point of a connector | ✅ (bends its connector) |
 | `pathLabel` | YPathLabel | Label on a connector | ✅ (on its connector) |
 | `advanced-icon` | — | Library icon, e.g. AWS (`iconId`, `category`, `collection`) | ✅ (named placeholder) |
-| `sticky` | YSticky | Sticky note | ❌ |
-| `section` | YSection | Titled frame grouping elements | ❌ |
+| `sticky` | YSticky | Sticky note | ✅ |
+| `section` | YSection | Titled frame grouping elements | ✅ |
 | `group` | YGroup | Grouping without a frame | ❌ |
 | `table`, `table-cell` | YTable, YTableCell | Table | ❌ |
 | `mindmap` | YMindMap | Mind map tree | ❌ |
@@ -210,6 +210,49 @@ it). A side label's box has its corner nearest the line 12 units from the
 point along the normal and reaches away from the line from there, so on a
 horizontal line it sits 12 above or below it, centred. The box is the text
 as the engine sets it with 4 units of padding round it.
+
+### Stickies and sections
+
+**Stickies** store `position` (the centre), `size` (144 × 144 by default),
+`color`, `text` (ADF), `fontScale`, `alignment` and `verticalAlignment`,
+like a shape; also who made them (`createdBy`, `authorIds`: account ids,
+never exported) and `isAuthorVisible`. Yjs keys: `c`, `tx`, `a`, `va`,
+`cb`, `aids`. The editor sizes a sticky with its sticky sizing strategy:
+
+- The text is padded 12 either way, scaled with the font (18 more at the
+  bottom when the author's name is shown, which the export does not draw).
+- Its content box is the stored size scaled with the font, less that
+  padding. The width is fixed; the height grows to fit the text.
+- It grows downward from where the unscaled box's top is, and sideways as
+  its text is aligned (centred text both ways), so at scale 2 a 144 sticky
+  is 288 square from the same top.
+- The box round it is then never smaller than 144 either way, about its
+  centre: a 100 sticky is drawn 144, and a scale-0.5 one 144 square,
+  centred on the 72 box it would have been.
+
+As with shapes, the growth is not stored. Colours resolve through the
+palette (stored `#FFDEB8`, orange, is drawn `#FCE4A6`); there is no
+outline, and a soft shadow.
+
+**Sections** store `position` (the centre), `size`, `color`, `title`,
+`titleWidth` (the placeholder's width, 140; not the drawn tab's) and
+`hasDropShadow`. Yjs keys: `c`, `ti`, `tw`, `ds`, `cf`. Nothing records
+what is in a section; a section is drawn in its stored z-order like any
+element, so one pasted after a sticky covers it. Drawn:
+
+- Never smaller than 160 either way, about its centre.
+- The fill through the palette; a border 3 wide inside the box, in the
+  colour the fill's palette group gives it (`getSectionBorderColor`): a
+  light fill (x100) the hue's strong colour (x300), a medium fill (x200 and
+  the named ones, e.g. the default teal) its strongest (x600), a strong
+  fill (x300) its darkest (x800, drawn as the hue's accent text colour);
+  white `#DDDEE1`. A section with a drop shadow has no border.
+- The title on a tab in the border's colour, above the top-left corner: 24
+  tall, its top 30 above the box, the semibold title 8 in from its left.
+  The tab is the title's width plus 13.6, but no wider than half the
+  section less 8 (room for the section's action label); a longer title
+  ends in an ellipsis. The title is grey (`#505258`) on light and white
+  fills and white on the others.
 
 ## Property dictionary
 

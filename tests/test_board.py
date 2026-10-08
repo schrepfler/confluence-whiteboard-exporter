@@ -416,3 +416,21 @@ def test_fiber_dump_reads_stickies_and_sections() -> None:
     k, e = board.node("K"), board.node("E")
     assert (k.kind, k.fill.hex, k.align, k.valign, k.x, k.w) == (Kind.STICKY, "#FCE4A6", "left", "top", -72, 144)
     assert (e.kind, e.title, e.shadow, e.stroke.hex, e.x, e.y) == (Kind.SECTION, "Plan", True, "#2898BD", -100, -100)
+
+
+@pytest.mark.parametrize(("size", "scale", "box"), [
+    # What the editor drew for a sticky stored at the origin, 144 or 100 square.
+    (100, 1.0, (-72, -72, 144, 144)),  # never smaller than 144, about its centre
+    (144, 2.0, (-144, -72, 288, 288)),  # scaled: grows down from its top, out from its middle
+    (144, 0.5, (-72, -108, 144, 144)),  # shrinks to 72 from its top, then held to 144 about that
+])
+def test_a_sticky_is_sized_as_in_the_editor(size: float, scale: float, box: tuple) -> None:
+    (node,) = _clip(_sticky("Scaled", fontScale=scale, size={"x": size, "y": size},
+                            basisSize={"x": size, "y": size})).nodes
+    assert node_box(node, SVG_METRICS) == pytest.approx(box)
+
+
+def test_a_section_is_never_smaller_than_160_about_its_centre() -> None:
+    (node,) = _clip({"type": "section", "position": {"x": 0, "y": 0}, "size": {"x": 120, "y": 90},
+                     "color": {"x": 200, "y": 244, "z": 249}, "title": "Small"}).nodes
+    assert node_box(node, SVG_METRICS) == (-80, -80, 160, 160)

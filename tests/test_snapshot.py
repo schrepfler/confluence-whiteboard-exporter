@@ -92,3 +92,15 @@ def test_refreshing_rewrites_only_what_drifted(tmp_path: Path) -> None:
     assert list(changed) == ["cell/b"]
     assert (tmp_path / "images" / "cell-a.png").read_bytes() == first.images["cell/a"], "noise is not written"
     assert (tmp_path / "images" / "cell-b.png").read_bytes() == again.images["cell/b"]
+
+
+def test_a_spec_that_gained_cells_still_keeps_the_others(tmp_path: Path) -> None:
+    first = _snapshot()
+    refresh(tmp_path, [Cell("cell/a")], first)
+    grown = copy.deepcopy(first)
+    grown.geometry["spec_hash"] = "t"
+    grown.geometry["cells"]["cell/new"] = copy.deepcopy(first.geometry["cells"]["cell/a"])
+    grown.images["cell/new"] = _png(30)
+    grown.images["cell/a"] = _png(20)[:-1] + b"\x00"  # other bytes, the same picture: must not be written
+    assert refresh(tmp_path, [Cell("cell/a"), Cell("cell/new")], grown) == {"cell/new": ["new"]}
+    assert (tmp_path / "images" / "cell-a.png").read_bytes() == first.images["cell/a"]

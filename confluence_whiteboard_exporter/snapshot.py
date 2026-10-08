@@ -122,16 +122,19 @@ def write(snapshot: Snapshot, directory: Path, keep: frozenset[str] = frozenset(
 
 
 def refresh(directory: Path, cells: list[Cell], live: Snapshot) -> dict[str, list[str]] | None:
-    """Make `live` the references in `directory` and return what drifted
-    from the ones there, per cell (None if there were none for this spec).
-    The image of a cell that has not drifted is left alone, so capture
+    """Make `live` the references in `directory` and return what changed
+    from the ones there, per cell (None if there were none). Cells are
+    compared by name, so a spec that gained cells still compares the rest;
+    the image of a cell that has not drifted is left alone, so capture
     noise does not rewrite it."""
     before = load(directory, cells) if (directory / "geometry.json").exists() else None
-    if before is None or before.geometry.get("spec_hash") != live.geometry.get("spec_hash"):
+    if before is None:
         write(live, directory)
         return None
-    changed = drift(before, live, [c.name for c in cells])
-    write(live, directory, keep=frozenset(c.name for c in cells if c.name not in changed))
+    known = [c.name for c in cells if c.name in before.geometry["cells"]]
+    changed = drift(before, live, known)
+    changed |= {c.name: ["new"] for c in cells if c.name not in before.geometry["cells"]}
+    write(live, directory, keep=frozenset(n for n in known if n not in changed))
     return changed
 
 

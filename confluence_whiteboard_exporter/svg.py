@@ -58,11 +58,15 @@ FONT_FAMILY = ('"Atlassian Sans", ui-sans-serif, -apple-system, BlinkMacSystemFo
 LABEL_PADDING = 4.0  # round a connector label's text, as in the editor
 LABEL_GAP = 12.0  # between a side label's box and its line, as in the editor
 # A section's title sits on a tab above its top-left corner (the editor's
-# section layout): 24 tall, its middle 18 above the top edge, the title
-# padded 8 either side, and no wider than the section. Its border, corners
-# and shadows are provisional until matched against the reference board.
+# section layout): 24 tall, its middle 18 above the top edge, the title 8
+# in from its left. The tab is the title's width and 13.6 more, no wider
+# than half the section less 8 (the room its action label leaves); a longer
+# title ends in an ellipsis. Its border is 3 wide, inside the box, and a
+# section with a drop shadow has none. Measured on the reference board.
 SECTION_TAB_H, SECTION_TAB_RISE, SECTION_TAB_PAD = 24.0, 18.0, 8.0
-SECTION_BORDER = 2.0
+SECTION_TAB_EXTRA = 13.6
+SECTION_TAB_ROOM = 8.0
+SECTION_BORDER = 3.0
 SECTION_RADIUS = 4.0
 SHADOWS = (
     '<filter id="wb-sticky-shadow" x="-10%" y="-10%" width="120%" height="130%">'
@@ -116,10 +120,10 @@ def svg_document(board: Board, shape_map: dict[int, int] | None = None) -> tuple
         d.kind for n in board.nodes if n.kind is Kind.SHAPE and (d := drawing(n.shape_kind, 0, 0, 1, 1, smap)).placeholder
     )
 
-    # Sections first, under what lies on them; then nodes in source z-order;
-    # connectors last so arrowheads stay on top.
+    # Nodes in source z-order (a section covers what came before it, as in
+    # the editor); connectors last so arrowheads stay on top.
     node_parts: list[str] = []
-    for node in sorted(board.nodes, key=lambda n: n.kind is not Kind.SECTION):
+    for node in board.nodes:
         box = boxes[node.id]
         if node.kind is Kind.LINE:
             for p in node.points:
@@ -359,7 +363,7 @@ def section_tab(node: Node, box: Box) -> Box | None:
     if not node.title:
         return None
     x, y, w, _ = box
-    width = min(w, SVG_METRICS.width(node.title, bold=True) + 2 * SECTION_TAB_PAD)
+    width = min(w / 2 - SECTION_TAB_ROOM, SVG_METRICS.width(node.title, bold=True) + SECTION_TAB_EXTRA)
     return x, y - SECTION_TAB_RISE - SECTION_TAB_H / 2, width, SECTION_TAB_H
 
 
@@ -368,22 +372,26 @@ def _section_frame(node: Node, box: Box) -> str:
     x, y, w, h = box
     if w <= 0 or h <= 0:
         return ""
-    border = _hex(node.stroke, "#B7B9BE")
-    shadow = ' filter="url(#wb-section-shadow)"' if node.shadow else ""
-    i = SECTION_BORDER / 2  # drawn inside the box, as shape outlines are
-    out = (f'<rect x="{fmt(x + i)}" y="{fmt(y + i)}" width="{fmt(max(w - 2 * i, 0))}" height="{fmt(max(h - 2 * i, 0))}" '
-           f'rx="{fmt(SECTION_RADIUS)}" fill="{_hex(node.fill, "#FFFFFF")}" stroke="{border}" '
-           f'stroke-width="{fmt(SECTION_BORDER)}"{shadow}/>')
+    border = _hex(node.stroke, "#DDDEE1")
+    fill = _hex(node.fill, "#FFFFFF")
+    if node.shadow:  # a shadow instead of a border
+        out = (f'<rect x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}" rx="{fmt(SECTION_RADIUS)}" '
+               f'fill="{fill}" filter="url(#wb-section-shadow)"/>')
+    else:
+        i = SECTION_BORDER / 2  # drawn inside the box, as shape outlines are
+        out = (f'<rect x="{fmt(x + i)}" y="{fmt(y + i)}" width="{fmt(max(w - 2 * i, 0))}" '
+               f'height="{fmt(max(h - 2 * i, 0))}" rx="{fmt(SECTION_RADIUS)}" fill="{fill}" stroke="{border}" '
+               f'stroke-width="{fmt(SECTION_BORDER)}"/>')
     if tab := section_tab(node, box):
         tx, ty, tw, th = tab
-        # Cut short (with an ellipsis) only a title wider than the section.
-        clip = " wb-section-clip" if tw >= w else ""
+        # Cut short (with an ellipsis) only a title wider than its room.
+        clip = " wb-section-clip" if tw >= w / 2 - SECTION_TAB_ROOM else ""
         out += (
             f'<rect x="{fmt(tx)}" y="{fmt(ty)}" width="{fmt(tw)}" height="{fmt(th)}" rx="{fmt(SECTION_RADIUS)}" '
             f'fill="{border}"/>'
             f'<foreignObject x="{fmt(tx)}" y="{fmt(ty)}" width="{fmt(tw)}" height="{fmt(th)}">'
             f'<div xmlns="http://www.w3.org/1999/xhtml" class="wb-section-title{clip}" '
-            f'style="color:{_hex(node.color, "#FFFFFF")};padding:0 {fmt(SECTION_TAB_PAD)}px;line-height:{fmt(th)}px">'
+            f'style="color:{_hex(node.color, "#FFFFFF")};padding:0 0 0 {fmt(SECTION_TAB_PAD)}px;line-height:{fmt(th)}px">'
             f"{_xml_escape(node.title or '')}</div></foreignObject>"
         )
     return out

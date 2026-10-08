@@ -29,14 +29,19 @@ def drawn(stored: str) -> str:
 # palette group of their fill (the editor's getSectionBorderColor and
 # getSectionTextColor): a light fill (x100) gets the hue's strong colour
 # (x300) and grey text, a medium fill (x200 and the named ones) its
-# strongest (x600) and white text, a strong fill (x300) its darkest (x800)
-# and white text; white gets a grey border.
+# strongest (x600) and white text, a strong fill (x300) its darkest (x800,
+# drawn as the hue's accent text colour) and white text; white gets a light
+# grey border and grey text. Checked against the reference board.
 _MEDIUM = {"b200": "b", "teal": "t", "g150": "g", "l200": "l", "y150": "y", "orange": "o", "red": "r",
            "m200": "m", "p200": "p", "n200": "n"}
 _STRONG = {f"{h}300": h for h in "btglyormp"} | {"n400": "n"}
 _LIGHT = {f"{h}100": h for h in "btglyormp"}
-SECTION_TEXT_GREY = "#505258"  # provisional, to be read from the reference board
+_DARKEST = {"b": "textAccentBlue", "t": "textAccentTeal", "g": "textAccentGreen", "l": "textAccentLime",
+            "y": "textAccentYellow", "o": "textAccentOrange", "r": "textAccentRed", "m": "textAccentMagenta",
+            "p": "textAccentPurple", "n": "n800"}
+SECTION_TEXT_GREY = "#505258"
 SECTION_TEXT_WHITE = "#FFFFFF"
+SECTION_WHITE_BORDER = "#DDDEE1"  # n300, which no stored colour resolves to
 
 
 @cache
@@ -58,6 +63,6 @@ def section_colours(stored_fill: str) -> tuple[str, str]:
         return _by_name(f"{_LIGHT[name]}300") or drawn(stored_fill), SECTION_TEXT_GREY
     if name in _MEDIUM:
         return _by_name(f"{_MEDIUM[name]}600") or drawn(stored_fill), SECTION_TEXT_WHITE
-    if name in _STRONG:  # darkest of the hue: provisional, x600 until the reference board says
-        return _by_name(f"{_STRONG[name]}600") or drawn(stored_fill), SECTION_TEXT_WHITE
-    return drawn("#B3B9C4"), SECTION_TEXT_GREY  # white, or a colour outside the palette
+    if name in _STRONG:
+        return _by_name(_DARKEST[_STRONG[name]]) or drawn(stored_fill), SECTION_TEXT_WHITE
+    return SECTION_WHITE_BORDER, SECTION_TEXT_GREY  # white, or a colour outside the palette

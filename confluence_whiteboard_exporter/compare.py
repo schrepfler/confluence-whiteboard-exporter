@@ -188,12 +188,27 @@ def _trim(points: list[Point], start: float, end: float) -> list[Point]:
 
 
 def hausdorff(a: list[Point], b: list[Point]) -> float:
-    """The largest distance from a point of either line to the other."""
+    """The largest distance from a point of either line to the other line.
+    Distances are to the other's segments, not its sampled points, so how
+    the two happen to be sampled does not count."""
     def one_way(p: list[Point], q: list[Point]) -> float:
-        return max(min(math.dist(u, v) for v in q) for u in p)
+        worst = 0.0
+        for u in p:
+            j = min(range(len(q)), key=lambda k: math.dist(u, q[k]))
+            near = [_to_segment(u, q[k], q[k + 1]) for k in (j - 1, j) if 0 <= k < len(q) - 1]
+            worst = max(worst, min(near, default=math.dist(u, q[j])))
+        return worst
     if not a or not b:
         return math.inf
     return max(one_way(a, b), one_way(b, a))
+
+
+def _to_segment(p: Point, a: Point, b: Point) -> float:
+    (px, py), (ax, ay), (bx, by) = p, a, b
+    dx, dy = bx - ax, by - ay
+    length2 = dx * dx + dy * dy
+    t = 0.0 if length2 == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / length2))
+    return math.hypot(px - ax - t * dx, py - ay - t * dy)
 
 
 def _line(x0: float, y0: float, x1: float, y1: float, step: float) -> list[Point]:

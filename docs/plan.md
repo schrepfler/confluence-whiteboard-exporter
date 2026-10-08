@@ -19,6 +19,8 @@ Checked board by board, side by side with the live editor:
   rounded bends, line ends, and labels on the line or to either side.
 - Images, including ones still loading when the board was copied.
 - Library icons (e.g. AWS) as named placeholders.
+- Stickies and sections, sized and drawn as the editor does; in JSON
+  Canvas a coloured card and a group with the section's title.
 - The Confluence API token: a clear message when it is rejected.
 
 ## Remaining
@@ -31,9 +33,11 @@ Checked board by board, side by side with the live editor:
   placeholders, with a warning.
 - **The font** is Atlassian Sans only where it is installed; elsewhere a
   system font stands in, so line breaks can differ slightly.
-- **Unsupported element types** (stickies, sections, tables, mind maps,
-  cards, Jira issues, …) are left out with a warning. Supporting one needs
-  a sample board containing it.
+- **Unsupported element types** (tables, mind maps, cards, Jira issues,
+  …) are left out with a warning. Supporting one needs a sample board
+  containing it, which a scratch board in a personal space can provide.
+- **A sticky's author name**, shown when `isAuthorVisible` is set, is not
+  drawn: the board stores only an account id.
 - **Dark theme**: colours are resolved against the light theme only.
 - **List bullets** are the browser's: a little larger than the editor's
   and about 4 units further from the text.
@@ -41,7 +45,7 @@ Checked board by board, side by side with the live editor:
   scales), though the editor's engine and CSS put the baseline in the same
   place; most likely the browser rounding the font's ascent and descent.
 
-## Next: a reference board
+## The reference board
 
 The rules above were worked out by comparing exports with real boards by
 eye. To keep checking them, and to catch the editor changing, the tests
@@ -214,7 +218,7 @@ are keyed by cell and survive a rebuild.
 - How large one board can grow before the editor slows down; at 548
   elements it is still quick.
 
-## Next: stickies and sections
+## Stickies and sections
 
 The two most common elements the export leaves out. Learnt from a scratch
 board in a personal space, made through the editor's own toolbar and
@@ -251,18 +255,32 @@ copied back, and from the editor's code.
 
 ### Steps
 
-1. Read stickies and sections from both dump formats into the board
+1. ✅ Read stickies and sections from both dump formats into the board
    model, and export them: JSON Canvas as a coloured card and a group
    with its title; SVG and HTML drawn as above.
-2. Cells on the reference board: sticky colours, text lengths,
+2. ✅ Cells on the reference board: sticky colours, text lengths,
    alignments, sizes and scales; section colours from each palette group
    and white, short and long titles, a drop shadow, elements on a
-   section, and one pasted before its section. Rebuild the board and
-   snapshot it.
-3. Match the editor's geometry cell by cell (sticky growth, section
-   boxes), then its drawing through the report (shadows, borders, the
-   title tab, a title longer than its section).
-4. Document the rules in confluence-whiteboard-model.md.
+   section, and one pasted before its section: 37 cells, 245 in all.
+3. ✅ Match the editor's geometry cell by cell, then its drawing through
+   the report: every cell matches; the report has 222 pass, 22 known (icon
+   artwork) and 1 warn (list bullets).
+4. ✅ Document the rules in confluence-whiteboard-model.md.
+
+What the board showed that the code and the first scratch board did not:
+
+- Stickies follow their own sizing strategy (the stored size scaled with
+  the font, grown from the unscaled box's top, held to 144); sections are
+  held to 160.
+- A section is drawn in its stored z-order, not under everything: one
+  pasted after a sticky covers it.
+- A strong fill's border is the hue's darkest colour; white's is
+  `#DDDEE1`; borders are 3 wide; a drop shadow replaces the border.
+- The title tab is the title plus 13.6, at most half the section less 8.
+
+Also found on the way: path drift compared sampled points 2 apart, which
+could read 1.0 for identical lines; it now measures to the other line's
+segments, and rebuilding the board changes no existing cell.
 
 ## Later
 

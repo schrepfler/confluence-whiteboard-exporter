@@ -344,11 +344,12 @@ def _section_el(title: str, w: float = 400, **kw) -> dict:
             "color": {"x": 200, "y": 244, "z": 249}, "title": title, **kw}
 
 
-def test_a_section_is_drawn_under_what_lies_on_it_with_its_title_on_a_tab() -> None:
+def test_a_section_covers_what_came_before_it_and_has_its_title_on_a_tab() -> None:
     sticky = {"type": "sticky", "position": {"x": 0, "y": 0}, "size": {"x": 144, "y": 144},
               "color": {"x": 255, "y": 222, "z": 184}}
     svg = _svg_for([sticky, _section_el("Plan")])
-    assert svg.index('fill="#C6EDFB"') < svg.index('fill="#FCE4A6"'), "the section first, though pasted later"
+    # Stored order, as the editor draws it: a section pasted after a sticky hides it.
+    assert svg.index('fill="#FCE4A6"') < svg.index('fill="#C6EDFB"')
     assert 'filter="url(#wb-sticky-shadow)"' in svg
     # The tab: 24 tall, its middle 18 above the top edge (-150), at the left edge.
     tab = re.search(r'<rect x="-200" y="(-?[\d.]+)" width="([\d.]+)" height="24" rx="4" fill="#2898BD"/>', svg)
@@ -356,7 +357,7 @@ def test_a_section_is_drawn_under_what_lies_on_it_with_its_title_on_a_tab() -> N
     assert 'class="wb-section-title" ' in svg and ">Plan</div>" in svg
 
 
-def test_a_title_wider_than_its_section_is_cut_short() -> None:
-    svg = _svg_for([_section_el("A section with a much longer title than its box", w=150)])
-    assert re.search(r'<rect x="-75" y="-180" width="150" height="24"', svg)
+def test_a_long_title_is_cut_short_at_half_the_section_less_8() -> None:
+    svg = _svg_for([_section_el("A section with a much longer title than its box", w=200)])
+    assert re.search(r'<rect x="-100" y="-180" width="92" height="24"', svg)
     assert "wb-section-title wb-section-clip" in svg

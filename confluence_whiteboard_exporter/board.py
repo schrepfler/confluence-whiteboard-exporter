@@ -741,13 +741,45 @@ def node_box(node: Node, metrics: TextMetrics) -> Box:
     if node.kind is Kind.SHAPE and node.w > 0 and (area := text_area(node.shape_kind, node.w)):
         top, height = _grown_shape(node, area, metrics, m, md)
         return node.x, top, node.w, height
-    if node.kind is Kind.STICKY and node.w > 0:  # its text fills it, padded, as in a plain rectangle
-        top, height = _grown_shape(node, text_area(0, node.w), metrics, m, md)
-        return node.x, top, node.w, height
+    if node.kind is Kind.STICKY and node.w > 0:
+        return _sticky_box(node, metrics, m, md)
+    if node.kind is Kind.SECTION:  # never smaller than SECTION_MIN either way, about its centre
+        w, h = max(node.w, SECTION_MIN), max(node.h, SECTION_MIN)
+        return node.x - (w - node.w) / 2, node.y - (h - node.h) / 2, w, h
     if node.kind is Kind.ICON and node.w > 0:  # a square drawing, with any label below it
         top, height = _grown_shape(node, TextArea(node.w, 0.0, node.w, 1.0, 0.0, label_below=True), metrics, m, md)
         return node.x, top, node.w, height
     return node.x, node.y, node.w, node.h
+
+
+# Stickies (the editor's sticky sizing strategy and constants): text padded
+# 12 either way, scaled with the font, in a box of the stored size scaled
+# with the font; never smaller than 144 either way. Sections are never
+# smaller than 160 (measured on the reference board).
+STICKY_PAD = 12.0
+STICKY_MIN = 144.0
+SECTION_MIN = 160.0
+
+
+def _sticky_box(node: Node, metrics: TextMetrics, m: TextMetrics, md: str | None) -> Box:
+    """A sticky's box as the editor sizes it. Its content box is the stored
+    size scaled with the font, less the scaled padding; it grows to fit the
+    text downward, and sideways as its text is aligned, from where the
+    unscaled box would put it; then the box round it is held to STICKY_MIN
+    about its centre."""
+    scale = node.font_scale
+    pad = STICKY_PAD * scale
+    cx, cy = node.x + node.w / 2, node.y + node.h / 2
+    width = node.w * scale - 2 * pad
+    height = node.h * scale - 2 * pad
+    if md and metrics.font_px is not None:
+        height = max(height, _wrapped_height(md, width, m, 0.0, 0.0))
+    unscaled_w, unscaled_h = node.w - 2 * pad, node.h - 2 * pad
+    grow = {"left": 1.0, "right": -1.0}.get(node.align, 0.0)  # left-aligned text grows rightward
+    x = cx - grow * (unscaled_w - width) / 2
+    y = cy - unscaled_h / 2 + height / 2
+    w, h = max(width + 2 * pad, STICKY_MIN), max(height + 2 * pad, STICKY_MIN)
+    return x - w / 2, y - h / 2, w, h
 
 
 def _grown_shape(node: Node, area: TextArea, metrics: TextMetrics, m: TextMetrics, md: str) -> tuple[float, float]:

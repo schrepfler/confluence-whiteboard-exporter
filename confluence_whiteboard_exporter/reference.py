@@ -41,6 +41,17 @@ FILLS = {  # a sample of the palette, by name
     "white": (255, 255, 255), "n200": (241, 242, 244),
 }
 STROKES = {"b800": (0, 85, 204), "g800": (33, 110, 78), "o800": (151, 79, 12), "p800": (94, 77, 178)}
+STICKY = (255, 222, 184)  # orange, a new sticky's colour
+STICKIES = {  # the editor's classic sticky colours
+    "orange": STICKY, "b200": (204, 224, 255), "p200": (223, 216, 253), "m200": (253, 208, 236),
+    "y150": (255, 239, 174), "g150": (199, 248, 227), "teal": (200, 244, 249), "red": (255, 210, 204),
+}
+SECTION = (200, 244, 249)  # teal, a new section's colour
+SECTION_FILLS = {  # from each palette group: light, medium, strong; and white
+    "b100": (233, 242, 255), "y100": (255, 247, 214), "r100": (255, 237, 235),
+    "teal": SECTION, "b200": (204, 224, 255), "y150": (255, 239, 174), "orange": STICKY, "n200": (241, 242, 244),
+    "b300": (133, 184, 255), "y300": (255, 222, 92), "n400": (179, 185, 196), "white": (255, 255, 255),
+}
 ROUTING_IDS = {name: pr for pr, name in ROUTINGS.items()}
 CAP_IDS = {name: i for i, name in CAPS.items()}
 STYLE_IDS = {name: i for i, name in STROKE_STYLES.items()}
@@ -89,6 +100,22 @@ def shape(kind: int, x: float, y: float, w: float, h: float, text: str | None = 
         "basisSize": v2(w, h), "basisPosition": v2(x, y), "alignment": opts.pop("align", "center"),
         "verticalAlignment": opts.pop("valign", 1), "rotation": 0.0, **opts,
     }
+
+
+def sticky(x: float, y: float, words: str | None = None, w: float = 144, h: float = 144, **opts: Any) -> Json:
+    content = opts.pop("content", None)
+    return {
+        "type": "sticky", "source": 1, "position": v2(x, y), "size": v2(w, h), "color": v3(opts.pop("color", STICKY)),
+        "text": content or (doc(para(words)) if words else doc()), "fontScale": opts.pop("scale", 1.0),
+        "basisSize": v2(w, h), "basisPosition": v2(x, y), "alignment": opts.pop("align", "center"),
+        "verticalAlignment": opts.pop("valign", 1), "rotation": 0.0, **opts,
+    }
+
+
+def section(x: float, y: float, w: float, h: float, title: str, **opts: Any) -> Json:
+    return {"type": "section", "source": 1, "position": v2(x, y), "size": v2(w, h),
+            "color": v3(opts.pop("color", SECTION)), "rotation": 0.0, "title": title, "titleWidth": 140,
+            "hasDropShadow": opts.pop("shadow", False), **opts}
 
 
 def text(x: float, y: float, content: str, *, align: str = "left", width: float | None = None,
@@ -260,6 +287,33 @@ def spec() -> list[Cell]:
     add("icon/aws", icon(0, 0, "Amazon-Simple-Storage-Service", "storage"))
     add("line/solid", line(-180, 0, 180, 0))
     add("line/dashed", line(-180, 40, 180, -40, style="dashed", stroke=2))
+
+    # Stickies.
+    for name, rgb in STICKIES.items():
+        add(f"sticky/colour {name}", sticky(0, 20, name, color=rgb))
+    wraps = "This sticky has a lot more text than fits on one line, so it grows"
+    add("sticky/wraps", sticky(0, 0, wraps))
+    add("sticky/overflows", sticky(0, -40, " ".join([wraps] * 2)))
+    add("sticky/empty", sticky(0, 20))
+    add("sticky/left top", sticky(0, 20, "left top", align="left", valign=0))
+    add("sticky/right bottom", sticky(0, 20, "right bottom", align="right", valign=2))
+    add("sticky/wide", sticky(0, 20, "wide", w=300))
+    add("sticky/tall", sticky(0, 20, "tall", h=260))
+    add("sticky/small", sticky(0, 20, "small", w=100, h=100))
+    add("sticky/scale 2", sticky(0, -40, "Scaled", scale=2.0))  # grows to 288, from its top
+    add("sticky/scale 0.5", sticky(0, 20, "Scaled down", scale=0.5))
+    add("sticky/heading and list", sticky(0, 0, content=doc(heading("Title", 3), bullets("one", "two"))))
+
+    # Sections: what lies on them is drawn over them, their title on a tab.
+    for name, rgb in SECTION_FILLS.items():
+        add(f"section/colour {name}", section(0, 30, 300, 200, name, color=rgb))
+    add("section/long title", section(0, 30, 220, 160, "A section with a much longer title than its box"))
+    add("section/no title", section(0, 30, 300, 200, ""))
+    add("section/drop shadow", section(0, 30, 300, 200, "Shadow", shadow=True))
+    add("section/small", section(0, 30, 120, 90, "Small"))
+    add("section/with elements", section(0, 30, 380, 260, "Contents"), sticky(-90, 30, "On it"),
+        shape(1, 100, 30, 120, 80, "Shape"))
+    add("section/pasted last", sticky(-60, 30, "Under?"), section(0, 30, 320, 240, "Pasted last"))
     return cells
 
 
@@ -345,7 +399,7 @@ def match_board(cells: list[Cell], board: dict[str, Json], centres: dict[str, tu
         return abs(cx - x - offset[0]) < 0.05 and abs(cy - y - offset[1]) < 0.05
 
     for i, e in enumerate(elements):
-        if e["type"] in ("shape", "text", "advanced-icon"):
+        if e["type"] in ("shape", "text", "advanced-icon", "sticky", "section"):
             hits = [eid for eid in by_type.get(e["type"], []) if near(eid, e["position"]["x"], e["position"]["y"])]
             if len(hits) == 1:
                 found[i] = hits[0]

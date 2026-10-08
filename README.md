@@ -93,7 +93,9 @@ command has `--help`.
   and edges Obsidian routes itself: shapes become cards coloured like their
   fill or outline, labels join on their edge, line ends other than arrows
   are drawn plain, connectors with a loose end are left out, and dividers
-  become thin cards. `--collision-fix` nudges overlapping cards apart.
+  become thin cards. Stickies are cards in their colour, and sections are
+  groups named by their title. `--collision-fix` nudges overlapping cards
+  apart.
 - **svg**: a faithful static replica. Shapes are drawn from the editor's own
   definitions and grown to fit their text as the editor grows them; text is
   laid out with the editor's character widths, weights and spacing; colours
@@ -118,9 +120,9 @@ so they are drawn as placeholders with their label below. Library icons (AWS
 and others) are named tiles for the same reason. Draw a kind as another with
 `--shape-map 'server=database'` (svg and html).
 
-Free text, shapes, connectors with their bends and labels, images and
-freehand lines (drawn straight, end to end) are supported. Stickies,
-sections, tables, mind maps, cards, Jira issues and the other element types
+Free text, shapes, stickies, sections, connectors with their bends and
+labels, images and freehand lines (drawn straight, end to end) are
+supported. Tables, mind maps, cards, Jira issues and the other element types
 are left out for now. Anything a format cannot show is reported as a warning
 rather than dropped silently. [docs/plan.md](docs/plan.md) lists what is
 still missing, such as the dark theme.
@@ -163,9 +165,10 @@ board generated from code with every element the export draws, in its
 variations, and what the editor made of it.
 
 - **The spec** (`confluence_whiteboard_exporter/reference.py`) describes a
-  grid of 208 labelled cells: every shape kind, outlines, fills, colours,
+  grid of 245 labelled cells: every shape kind, outlines, fills, colours,
   text alignment, sizes, headings and lists, free text, connectors of every
-  routing, line end, weight and style, bend handles and labels.
+  routing, line end, weight and style, bend handles and labels, stickies
+  and sections.
 - **The references** (`tests/reference/golden/`, committed) are the editor's
   drawn geometry for each cell (`geometry.json`: each element's box, each
   connector's path, each label's box) and an image of each cell at 100%
