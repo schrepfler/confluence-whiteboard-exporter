@@ -185,19 +185,33 @@ variations, and what the editor made of it.
   to the cache by `reference snapshot`; without it a system font stands in
   (`--no-font` forces that).
 
-Refreshing the references needs your own Confluence, with the same `.env`
-and browser session as an export. Do it when the spec changes (the tests say
-so) or to see whether the editor has changed:
+Checking against the live editor needs your own Confluence and a reference
+board, built once with the same `.env` and browser session as an export:
 
 ```sh
 uv run confluence-whiteboard-exporter reference create --space <spaceKey>   # e.g. your personal space, ~<account id>
-uv run confluence-whiteboard-exporter reference snapshot                    # rewrites tests/reference/golden/
 ```
 
 `reference create` makes a whiteboard titled "confluence-whiteboard-exporter
 reference" and pastes the spec into it; run again, it clears and refills the
 same board. It only ever writes to that board, and keeps its id outside the
-repo. `reference snapshot` only reads it.
+repo. Run it again when the spec changes (the tests say so). Then:
+
+```sh
+uv run pytest --live              # also reads your board and compares it with the references
+uv run pytest --update-goldens    # makes your board the references (implies --live)
+```
+
+`--live` reads the board once per run (about a minute) and fails for each
+cell the editor now draws differently: a box or path moved by more than
+half a unit, an element gone or new, or more than 1% of the cell's drawn
+pixels changed. Such a failure means the editor changed, not the export.
+Once the change is understood, `--update-goldens` rewrites
+`tests/reference/golden/` and lists what changed; the image of a cell that
+did not change is left alone, so capture noise does not churn the files.
+The offline tests then show what the export must follow. `reference
+snapshot` does the same update from the command line. Both only read the
+board.
 
 ### Data taken from the editor
 
@@ -225,6 +239,7 @@ an editor update:
 | `canvas.py`, `svg.py`, `html.py` | Renderers |
 | `deploy.py`, `storage.py` | Writes outputs, optionally into an Obsidian vault; where files go |
 | `reference.py`, `editor.py`, `geometry_probe.js` | The reference board's spec; pasting it into the editor and reading back what it draws |
+| `snapshot.py` | Reading the reference board back, saving it as the references, and its drift from them |
 | `compare.py`, `report.py` | Our export against the references: geometry, and the report |
 
 [docs/confluence-whiteboard-model.md](docs/confluence-whiteboard-model.md)

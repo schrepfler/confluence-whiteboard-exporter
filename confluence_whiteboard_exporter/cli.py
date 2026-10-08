@@ -191,45 +191,27 @@ GOLDEN_DIR = Path("tests/reference/golden")
 @reference.command("snapshot")
 @click.option("--out", "golden_dir", type=click.Path(file_okay=False, path_type=Path), default=GOLDEN_DIR,
               show_default=True, help="Where to write the references.")
-@click.pass_context
-def reference_snapshot(ctx: click.Context, golden_dir: Path) -> None:
+def reference_snapshot(golden_dir: Path) -> None:
     """Read what the editor drew on the reference board and save it as the
     references the tests compare against: its geometry per cell, and an
-    image of each cell at 100%."""
-    import asyncio as _asyncio
-    import json as _json
+    image of each cell at 100%. `pytest --live --update-goldens` does the
+    same from a test run."""
+    from .reference import spec
+    from .snapshot import SnapshotError, board_state, refresh, take
 
-    from .reference import cell_slug, match_board, payload, spec, spec_hash
-    from .storage import atomic_write_text, reference_state_path, storage_state_path
-
-    base_url = ctx.obj["base_url"]
-    state_path = reference_state_path()
-    if not base_url or not state_path.exists():
-        click.echo("ERROR: no reference board yet; "
-                   "run `confluence-whiteboard-exporter reference create --space KEY` first.", err=True)
-        sys.exit(2)
-    state = _json.loads(state_path.read_text())
     cells = spec()
-    if state.get("spec_hash") != spec_hash(payload(cells)):
-        click.echo("ERROR: the spec changed since the board was built; "
-                   "run `confluence-whiteboard-exporter reference create` again.", err=True)
+    try:
+        snapshot = take(cells, board_state(cells))
+    except SnapshotError as e:
+        click.echo(f"ERROR: {e}.", err=True)
         sys.exit(2)
-
-    board, centres, geometry, bundle, images = _asyncio.run(
-        _read_reference(base_url, state["space"], state["board_id"], storage_state_path(), cells))
-    golden = match_board(cells, board, centres, geometry)
-    golden["editor_bundle"] = bundle
-    missing = [f"{name}#{e['place']}" for name, entries in golden["cells"].items() for e in entries if e.get("missing")]
-    target = golden_dir / "geometry.json"
-    atomic_write_text(target, _json.dumps(golden, indent=1) + "\n")
-    image_dir = golden_dir / "images"
-    image_dir.mkdir(parents=True, exist_ok=True)
-    for old in image_dir.glob("*.png"):
-        old.unlink()
-    for name, png in images.items():
-        (image_dir / f"{cell_slug(name)}.png").write_bytes(png)
-    click.echo(f"wrote {target} and {len(images)} images in {image_dir}: {len(golden['cells'])} cells, editor {bundle}")
-    if missing:
+    changed = refresh(golden_dir, cells, snapshot)
+    click.echo(f"wrote {golden_dir}: {len(snapshot.geometry['cells'])} cells, editor "
+               f"{snapshot.geometry['editor_bundle']}"
+               + ("" if changed is None else f"; {len(changed)} cell(s) changed since the last snapshot"))
+    for name, what in sorted((changed or {}).items()):
+        click.echo(f"  {name}: {'; '.join(what)}")
+    if missing := snapshot.missing:
         click.echo(f"  {len(missing)} element(s) not found on the board: {', '.join(missing[:10])}", err=True)
 
 
@@ -328,23 +310,6 @@ async def _measure(base_url: str, space: str, board_id: str, items: list[dict], 
     async with browser_context(session) as browser:
         _, frame = await open_board(browser, base_url, space, board_id)
         return await measure_text(frame, items)
-
-
-async def _read_reference(base_url: str, space: str, board_id: str, session: Path, cells: list) -> tuple:
-    from .editor import (CAPTURE_VIEWPORT, browser_context, capture_cells, editor_bundle, fetch_editor_font,
-                         open_board, read_geometry, read_stored)
-    from .reference import cell_rects, paste_offset, payload
-    from .storage import editor_font_path
-
-    async with browser_context(session, viewport=CAPTURE_VIEWPORT) as browser:
-        page, frame = await open_board(browser, base_url, space, board_id)
-        board, centres = await read_stored(frame)
-        geometry, bundle = await read_geometry(frame), await editor_bundle(frame)
-        ox, oy = paste_offset(payload(cells), board, centres)
-        rects = {name: (x + ox, y + oy, w, h) for name, (x, y, w, h) in cell_rects(cells).items()}
-        images = await capture_cells(page, frame, rects)
-        await fetch_editor_font(page, frame, editor_font_path())
-        return board, centres, geometry, bundle, images
 
 
 async def _build_reference(base_url: str, space: str, board_id: str, html: str, expected: int,

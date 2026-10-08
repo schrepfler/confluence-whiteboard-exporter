@@ -122,6 +122,17 @@ built from code, with what the editor makes of it kept as the reference.
    22 are known placeholders (icon artwork), one warns (list bullets)
    and none fail.
 5. `--live` and `--update-goldens`; images and library icons on the board.
+   - ✅ `pytest --live` reads the tester's board once per run (about a
+     minute) and fails for each cell drawn differently from the
+     references: a box or path moved by more than half a unit, an element
+     gone or new, or more than 1% of the cell's drawn pixels changed.
+     Boards built at different paste offsets agree to 0.05 units, and two
+     captures of one board to a colour level, so these margins catch only
+     real changes. All 208 cells still match.
+   - ✅ `pytest --update-goldens` (and `reference snapshot`) rewrite the
+     references and list what changed; images of cells that did not
+     change are kept, so capture noise does not churn them.
+   - Images and more library icons on the board.
 
 ### Known gaps (step 3)
 
