@@ -337,3 +337,26 @@ def test_text_uses_the_editors_type_and_spacing() -> None:
     assert 'font-size="15.5"' in svg and '"Atlassian Sans", ui-sans-serif' in svg
     assert f"line-height:{22 / (11.6 / 0.75):.4f}" in svg
     assert f".node-body h1{{font-size:{27 / (11.6 / 0.75):.4f}em;line-height:{32 / 27:.4f}" in svg
+
+
+def _section_el(title: str, w: float = 400, **kw) -> dict:
+    return {"type": "section", "position": {"x": 0, "y": 0}, "size": {"x": w, "y": 300},
+            "color": {"x": 200, "y": 244, "z": 249}, "title": title, **kw}
+
+
+def test_a_section_is_drawn_under_what_lies_on_it_with_its_title_on_a_tab() -> None:
+    sticky = {"type": "sticky", "position": {"x": 0, "y": 0}, "size": {"x": 144, "y": 144},
+              "color": {"x": 255, "y": 222, "z": 184}}
+    svg = _svg_for([sticky, _section_el("Plan")])
+    assert svg.index('fill="#C6EDFB"') < svg.index('fill="#FCE4A6"'), "the section first, though pasted later"
+    assert 'filter="url(#wb-sticky-shadow)"' in svg
+    # The tab: 24 tall, its middle 18 above the top edge (-150), at the left edge.
+    tab = re.search(r'<rect x="-200" y="(-?[\d.]+)" width="([\d.]+)" height="24" rx="4" fill="#2898BD"/>', svg)
+    assert tab and float(tab.group(1)) == -180 and float(tab.group(2)) < 100
+    assert 'class="wb-section-title" ' in svg and ">Plan</div>" in svg
+
+
+def test_a_title_wider_than_its_section_is_cut_short() -> None:
+    svg = _svg_for([_section_el("A section with a much longer title than its box", w=150)])
+    assert re.search(r'<rect x="-75" y="-180" width="150" height="24"', svg)
+    assert "wb-section-title wb-section-clip" in svg

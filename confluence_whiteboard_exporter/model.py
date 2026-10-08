@@ -66,6 +66,9 @@ class ClipboardElement(BaseModel):
     rotation: float | None = None
     # Free-floating text elements: size is a placeholder, the text auto-widens.
     allowFlexibleWidth: bool | None = None
+    # Sections: a titled frame.
+    title: str | None = None
+    hasDropShadow: bool | None = None
 
     sourceElement: str | None = None
     sourceAnchor: Anchor | None = None

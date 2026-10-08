@@ -241,13 +241,13 @@ def test_elements_it_cannot_draw_are_omitted_and_reported(caplog) -> None:
     caplog.set_level(logging.WARNING)
     board = _clip(
         {"type": "shape", "position": {"x": 0, "y": 0}, "size": {"x": 10, "y": 10}},
-        {"type": "sticky", "position": {"x": 0, "y": 0}},
-        {"type": "sticky", "position": {"x": 9, "y": 9}},
-        {"type": "section", "position": {"x": 0, "y": 0}},
+        {"type": "table", "position": {"x": 0, "y": 0}},
+        {"type": "table", "position": {"x": 9, "y": 9}},
+        {"type": "card", "position": {"x": 0, "y": 0}},
     )
     assert [n.kind for n in board.nodes] == [Kind.SHAPE]
     (msg,) = [r.getMessage() for r in caplog.records]
-    assert "board 1" in msg and "1 section, 2 sticky" in msg
+    assert "board 1" in msg and "1 card, 2 table" in msg
 
 
 def test_a_fully_drawn_board_reports_nothing(caplog) -> None:
@@ -275,7 +275,7 @@ def test_fiber_dump_reads_alignment_wrapping_and_routing(caplog) -> None:
             "S": {"t": "shape", "sh": 2, "a": 2, "va": 0},
             "T": {"t": "text", "a": 0, "fw": True},
             "C": {"t": "connector", "se": "S", "te": "T", "pr": 1, "sc": 5, "ec": 4},
-            "N": {"t": "sticky"},
+            "N": {"t": "card"},
         },
         "dimensions": [{"key": "fs#T", "val": 2}],
         "zindex": ["S", "T", "C", "N"],
@@ -286,7 +286,7 @@ def test_fiber_dump_reads_alignment_wrapping_and_routing(caplog) -> None:
     assert (t.align, t.auto_width, t.font_scale) == ("center", True, 2.0)
     (edge,) = board.edges
     assert (edge.routing, edge.start_cap, edge.end_cap) == ("straight", "filled-diamond", "open-arrow")
-    assert any("1 sticky" in r.getMessage() for r in caplog.records)
+    assert any("1 card" in r.getMessage() for r in caplog.records)
 
 
 # ---------------------------------------------------------------- waypoints
@@ -371,3 +371,48 @@ def test_headings_are_spaced_as_in_the_editor(markdown: str, scale: float, heigh
     from confluence_whiteboard_exporter.board import _wrapped_height
 
     assert _wrapped_height(markdown, 1000, SVG_METRICS.scaled(scale), pad_h=0) == pytest.approx(height)
+
+
+# ------------------------------------------------------- stickies and sections
+
+
+def _sticky(text: str, **kw) -> dict:
+    adf = json.dumps({"version": 1, "type": "doc", "content": [
+        {"type": "paragraph", "content": [{"type": "text", "text": text}]}]})
+    return {"type": "sticky", "position": {"x": 0, "y": 0}, "size": {"x": 144, "y": 144},
+            "basisPosition": {"x": 0, "y": 0}, "basisSize": {"x": 144, "y": 144},
+            "color": {"x": 255, "y": 222, "z": 184}, "text": adf, **kw}
+
+
+def test_a_sticky_is_drawn_in_its_palette_colour_and_grows_down_to_fit_its_text() -> None:
+    long = "This sticky has a lot more text than fits on one line, so we can see what the editor does with it"
+    short, tall = _clip(_sticky("Inside")).nodes[0], _clip(_sticky(long)).nodes[0]
+    assert (short.kind, short.fill.hex, short.align, short.valign) == (Kind.STICKY, "#FCE4A6", "center", "middle")
+    assert node_box(short, SVG_METRICS) == (-72, -72, 144, 144)
+    # Seven lines, as the editor wraps it: 7 x 22 + 2 x 12, from the same top.
+    assert node_box(tall, SVG_METRICS) == (-72, -72, 144, 178)
+
+
+def test_a_section_takes_its_border_and_title_colours_from_its_fill() -> None:
+    (teal,) = _clip({"type": "section", "position": {"x": 0, "y": 0}, "size": {"x": 400, "y": 300},
+                     "color": {"x": 200, "y": 244, "z": 249}, "title": "Plan", "hasDropShadow": True}).nodes
+    assert (teal.kind, teal.title, teal.shadow) == (Kind.SECTION, "Plan", True)
+    assert (teal.x, teal.y, teal.w, teal.h) == (-200, -150, 400, 300)
+    assert (teal.fill.hex, teal.stroke.hex, teal.color.hex) == ("#C6EDFB", "#2898BD", "#FFFFFF")
+
+
+def test_fiber_dump_reads_stickies_and_sections() -> None:
+    def rgb(r: float, g: float, b: float) -> list[int]:
+        return list(struct.pack(">3f", r, g, b))
+
+    fiber = {
+        "board": {"K": {"t": "sticky", "c": rgb(255, 222, 184), "a": 1, "va": 0},
+                  "E": {"t": "section", "c": rgb(200, 244, 249), "ti": "Plan", "ds": True}},
+        "dimensions": [{"key": "p#K", "val": [0, 0]}, {"key": "s#K", "val": [144, 144]},
+                       {"key": "p#E", "val": [100, 50]}, {"key": "s#E", "val": [400, 300]}],
+        "zindex": ["K", "E"],
+    }
+    board = from_dump(DumpFile.model_validate({"board": META, "strategy": "fiber", "fiber_dump": fiber}))
+    k, e = board.node("K"), board.node("E")
+    assert (k.kind, k.fill.hex, k.align, k.valign, k.x, k.w) == (Kind.STICKY, "#FCE4A6", "left", "top", -72, 144)
+    assert (e.kind, e.title, e.shadow, e.stroke.hex, e.x, e.y) == (Kind.SECTION, "Plan", True, "#2898BD", -100, -100)

@@ -87,7 +87,9 @@ def render_canvas(
     """`vault_prefix` is prepended to image paths, which Obsidian resolves
     from the vault root rather than from the canvas file."""
     boxes = layout(board, CANVAS_METRICS)
-    nodes = [_node(n, boxes[n.id], vault_prefix) for n in board.nodes]
+    # Sections are groups, listed first so they sit under what lies on them.
+    ordered = sorted(board.nodes, key=lambda n: n.kind is not Kind.SECTION)
+    nodes = [_node(n, boxes[n.id], vault_prefix) for n in ordered]
     dropped_caps: Counter[str] = Counter()
     edges: list[CanvasEdge] = []
     loose = 0
@@ -139,6 +141,8 @@ def _node(n: Node, box: tuple[float, float, float, float], vault_prefix: str) ->
     if n.kind is Kind.ICON:  # its artwork is not available: name it
         text = f"*{n.icon}*" + (f"\n\n{n.markdown}" if n.markdown else "")
         return CanvasNode(id=n.id, type="text", x=x, y=y, width=w, height=h, color=_color(n.stroke), text=text)
+    if n.kind is Kind.SECTION:
+        return CanvasNode(id=n.id, type="group", x=x, y=y, width=w, height=h, color=_color(n.fill), label=n.title)
     if n.kind is Kind.LINE:
         # No line primitive: a thin coloured card stands in for dividers.
         t = max(_MIN_LINE_THICKNESS, int(n.stroke_width * 2))

@@ -140,3 +140,17 @@ def test_connector_labels_become_edge_labels() -> None:
         "type": "pathLabel", "sourcePathIndex": 3, "proportion": 0.5,
         "text": '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Calls"}]}]}'}))
     assert render_canvas(from_dump(dump)).edges[0].label == "Calls"
+
+
+def test_a_section_is_a_group_named_by_its_title_under_what_lies_on_it() -> None:
+    board = from_dump(DumpFile.model_validate({
+        "board": {"boardId": "1", "title": "t", "spaceKey": "S"}, "strategy": "clipboard", "elements": [
+            ClipboardElement.model_validate({"type": "sticky", "position": {"x": 0, "y": 0},
+                                             "size": {"x": 144, "y": 144}, "color": {"x": 255, "y": 222, "z": 184}}),
+            ClipboardElement.model_validate({"type": "section", "position": {"x": 0, "y": 0},
+                                             "size": {"x": 400, "y": 300}, "color": {"x": 200, "y": 244, "z": 249},
+                                             "title": "Plan"}),
+        ]}))
+    group, sticky = render_canvas(board).nodes
+    assert (group.type, group.label, group.x, group.y, group.width, group.height) == ("group", "Plan", -200, -150, 400, 300)
+    assert (sticky.type, sticky.color) == ("text", "#FCE4A6")

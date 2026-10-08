@@ -214,6 +214,56 @@ are keyed by cell and survive a rebuild.
 - How large one board can grow before the editor slows down; at 548
   elements it is still quick.
 
+## Next: stickies and sections
+
+The two most common elements the export leaves out. Learnt from a scratch
+board in a personal space, made through the editor's own toolbar and
+copied back, and from the editor's code.
+
+### What the editor stores
+
+- **Sticky** (`sticky`): `position`, `size` (144 × 144 by default),
+  `color`, `text` (ADF), `fontScale`, `alignment`, `verticalAlignment`,
+  `basisSize`/`basisPosition`, `rotation`; also `createdBy`, `authorIds`
+  and `isAuthorVisible` (account ids: never exported). Yjs keys: `c`,
+  `tx`, `a`, `va`, `cb`, `aids`.
+- **Section** (`section`): `position`, `size`, `color`, `title`,
+  `titleWidth` (140, the placeholder's width; not the drawn tab's),
+  `hasDropShadow`, `rotation`. Yjs keys: `c`, `ti`, `tw`, `ds`, `cf`.
+- Neither records what is in a section: membership is geometric. A
+  section is a frame drawn under what lies on it.
+
+### How the editor draws them (to confirm cell by cell)
+
+- **Stickies** grow downward to fit their text, as shapes do, and the
+  growth is not stored either: a sticky of seven lines is
+  `7 × 22 + 24 = 178` tall, so its text is set as a shape's, 12 units in.
+  Colours resolve through the same palette as shapes (stored `#FFDEB8`
+  is drawn `#FCE4A6`). They have a soft shadow and no outline.
+- **Sections**: the fill resolves through the palette; the border and the
+  title's colours come from the fill's palette group: a light fill (x100)
+  gets a strong border (x300) and grey title text, a medium fill (x200,
+  the default teal) the strongest (x600: teal is drawn `#2898BD`) and
+  white text, a strong fill (x300) a darker one and white text; white
+  gets a grey border. The title sits on a tab 24 tall whose middle is 18
+  above the section's top edge, as wide as the semibold title plus 8 on
+  each side, but no wider than the section.
+
+### Steps
+
+1. Read stickies and sections from both dump formats into the board
+   model, and export them: JSON Canvas as a coloured card and a group
+   with its title; SVG and HTML drawn as above.
+2. Cells on the reference board: sticky colours, text lengths,
+   alignments, sizes and scales; section colours from each palette group
+   and white, short and long titles, a drop shadow, elements on a
+   section, and one pasted before its section. Rebuild the board and
+   snapshot it.
+3. Match the editor's geometry cell by cell (sticky growth, section
+   boxes), then its drawing through the report (shadows, borders, the
+   title tab, a title longer than its section).
+4. Document the rules in confluence-whiteboard-model.md.
+
 ## Later
 
 - Export a space straight into an Obsidian vault (`--vault`, `--vault-prefix`)

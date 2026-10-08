@@ -28,7 +28,7 @@ from typing import Any
 
 from .adf import adf_to_html, adf_to_markdown
 from .model import Anchor, BoardMeta, ClipboardElement, DumpFile, FiberDump, Vector2, Vector3
-from .palette import drawn
+from .palette import drawn, section_colours
 from .shapes import TextArea, text_area
 
 log = logging.getLogger(__name__)
@@ -85,23 +85,29 @@ class Rgb:
 
     @classmethod
     def from_float32_be(cls, raw: Any) -> Rgb | None:
-        """Decode a Yjs colour: 12 bytes holding three big-endian float32s.
+        """Decode a Yjs colour, as drawn: see `_float32_rgb`."""
+        stored = _float32_rgb(raw)
+        return stored.drawn() if stored else None
 
-        Playwright hands a Uint8Array back as a list or as an index-keyed dict.
-        """
-        if isinstance(raw, dict):
-            data = [raw.get(str(i), raw.get(i)) for i in range(12)]
-        elif isinstance(raw, list):
-            data = raw[:12]
-        else:
-            return None
-        if len(data) < 12 or any(v is None for v in data):
-            return None
-        try:
-            r, g, b = struct.unpack(">3f", bytes(int(v) for v in data))
-        except (struct.error, ValueError):
-            return None
-        return cls.of(r, g, b).drawn()
+
+def _float32_rgb(raw: Any) -> Rgb | None:
+    """A Yjs colour as stored: 12 bytes holding three big-endian float32s.
+
+    Playwright hands a Uint8Array back as a list or as an index-keyed dict.
+    """
+    if isinstance(raw, dict):
+        data = [raw.get(str(i), raw.get(i)) for i in range(12)]
+    elif isinstance(raw, list):
+        data = raw[:12]
+    else:
+        return None
+    if len(data) < 12 or any(v is None for v in data):
+        return None
+    try:
+        r, g, b = struct.unpack(">3f", bytes(int(v) for v in data))
+    except (struct.error, ValueError):
+        return None
+    return Rgb.of(r, g, b)
 
 
 def _channel(v: float) -> int:
@@ -114,6 +120,8 @@ class Kind(StrEnum):
     IMAGE = "image"
     LINE = "line"  # freehand line, e.g. a section divider
     ICON = "icon"  # an icon from Atlassian's library; its artwork is not available
+    STICKY = "sticky"  # a sticky note: coloured, with text, growing downward to fit it
+    SECTION = "section"  # a titled frame; what lies on it is drawn over it
 
 
 @dataclass(frozen=True)
@@ -144,6 +152,8 @@ class Node:
     image: Image | None = None
     points: tuple[Point, ...] = ()  # LINE endpoints
     icon: str | None = None  # ICON: the library icon's name
+    title: str | None = None  # SECTION: its title, drawn on a tab above it (stroke: the tab and border; color: the title)
+    shadow: bool = False  # SECTION: drawn with a drop shadow
 
     @cached_property
     def markdown(self) -> str | None:
@@ -366,7 +376,30 @@ def _clip_node(nid: str, e: ClipboardElement, media: dict[str, str], losses: _Lo
             icon=_icon_name(e.iconId) or e.category or "icon",
             adf=_fix_mojibake(e.text),
         )
-    return None  # not drawn yet: stickies, sections, tables, ...
+    if e.type == "sticky" and e.position:
+        x, y, w, h = _shape_box(e)
+        return Node(
+            id=nid, kind=Kind.STICKY, x=x, y=y, w=w, h=h,
+            fill=Rgb.from_vector(e.color),
+            align=e.alignment if e.alignment in _HALIGN else "center",
+            valign=_VALIGN.get(1 if e.verticalAlignment is None else e.verticalAlignment, "middle"),
+            font_scale=_scale(e.fontScale),
+            adf=_fix_mojibake(e.text),
+        )
+    if e.type == "section" and e.position and e.size:
+        stored = Rgb.of(e.color.x, e.color.y, e.color.z) if e.color else None
+        return _section(nid, _centred(e.position.x, e.position.y, e.size.x, e.size.y), stored, e.title,
+                        bool(e.hasDropShadow))
+    return None  # not drawn yet: tables, mind maps, cards, ...
+
+
+def _section(nid: str, box: Box, stored: Rgb | None, title: str | None, shadow: bool) -> Node:
+    """A section: its fill drawn through the palette, its border, tab and
+    title in the colours the fill's palette group gives them."""
+    border, text = section_colours(stored.hex if stored else "#FFFFFF")
+    return Node(id=nid, kind=Kind.SECTION, x=box[0], y=box[1], w=box[2], h=box[3],
+                fill=stored.drawn() if stored else Rgb.parse("#FFFFFF"), stroke=Rgb.parse(border),
+                color=Rgb.parse(text), title=_fix_mojibake(title) if title else None, shadow=shadow)
 
 
 def _clip_edge(eid: str, e: ClipboardElement, ids: list[str], losses: _Losses) -> Edge:
@@ -551,7 +584,7 @@ def _from_fiber(fd: FiberDump, media: dict[str, str], losses: _Losses) -> tuple[
                 stroke_size=int(_num(raw.get("st"), 1.0)),
             )
             continue
-        if t in ("shape", "text"):
+        if t in ("shape", "text", "sticky"):
             x, y, w, h = _grown_box(_pair(d.get("p")), _opt_pair(d.get("s")), _opt_pair(d.get("bp")),
                                     _opt_pair(d.get("bs")))
         if t == "shape":
@@ -573,6 +606,16 @@ def _from_fiber(fd: FiberDump, media: dict[str, str], losses: _Losses) -> tuple[
                               align=_FIBER_HALIGN.get(raw.get("a", 1), "left"), valign="top",
                               font_scale=_scale(_num(d.get("fs"), 1.0)),
                               auto_width=raw.get("fw") is not False))
+        elif t == "sticky":
+            nodes.append(Node(id=eid, kind=Kind.STICKY, x=x, y=y, w=w, h=h,
+                              fill=Rgb.from_float32_be(raw.get("c")),
+                              align=_FIBER_HALIGN.get(raw.get("a", 0), "center"),
+                              valign=_VALIGN.get(raw.get("va", 1), "middle"),
+                              font_scale=_scale(_num(d.get("fs"), 1.0))))
+        elif t == "section":
+            raw_rgb = _float32_rgb(raw.get("c"))
+            nodes.append(_section(eid, _centred(*_pair(d.get("p")), *_pair(d.get("s"))), raw_rgb,
+                                  _str(raw.get("ti")), raw.get("ds") is True))
         elif t == "image" and raw.get("fi"):
             x, y, w, h = _centred(*_pair(d.get("p")), *_pair(d.get("s")))
             fid = str(raw["fi"])
@@ -697,6 +740,9 @@ def node_box(node: Node, metrics: TextMetrics) -> Box:
         return node.x - shift, node.y, w, h
     if node.kind is Kind.SHAPE and node.w > 0 and (area := text_area(node.shape_kind, node.w)):
         top, height = _grown_shape(node, area, metrics, m, md)
+        return node.x, top, node.w, height
+    if node.kind is Kind.STICKY and node.w > 0:  # its text fills it, padded, as in a plain rectangle
+        top, height = _grown_shape(node, text_area(0, node.w), metrics, m, md)
         return node.x, top, node.w, height
     if node.kind is Kind.ICON and node.w > 0:  # a square drawing, with any label below it
         top, height = _grown_shape(node, TextArea(node.w, 0.0, node.w, 1.0, 0.0, label_below=True), metrics, m, md)
