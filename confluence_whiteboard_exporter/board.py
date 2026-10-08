@@ -733,7 +733,7 @@ SVG_METRICS = TextMetrics(char_w=7.85, line_h=EDITOR_LINE_PX, pad_w=24.0, pad_h=
                           free_pad=16.0, font_px=EDITOR_FONT_PX)
 
 
-def node_box(node: Node, metrics: TextMetrics) -> Box:
+def node_box(node: Node, metrics: TextMetrics, drawings: dict[int, dict[str, Any]] | None = None) -> Box:
     """Where to draw `node` for a renderer with these text metrics.
 
     Shapes keep their drawn width and wrap text inside it, growing only in
@@ -751,7 +751,7 @@ def node_box(node: Node, metrics: TextMetrics) -> Box:
         # Text widens away from its aligned edge, as in the editor.
         shift = {"left": 0.0, "center": 0.5, "right": 1.0}.get(node.align, 0.0) * (w - node.w)
         return node.x - shift, node.y, w, h
-    if node.kind is Kind.SHAPE and node.w > 0 and (area := text_area(node.shape_kind, node.w)):
+    if node.kind is Kind.SHAPE and node.w > 0 and (area := text_area(node.shape_kind, node.w, extra=drawings)):
         top, height = _grown_shape(node, area, metrics, m, md)
         return node.x, top, node.w, height
     if node.kind is Kind.STICKY and node.w > 0:
@@ -820,7 +820,7 @@ def _grown_shape(node: Node, area: TextArea, metrics: TextMetrics, m: TextMetric
 
 
 def layout(board: Board, metrics: TextMetrics) -> dict[str, Box]:
-    return {n.id: node_box(n, metrics) for n in board.nodes}
+    return {n.id: node_box(n, metrics, board.drawings) for n in board.nodes}
 
 
 def anchor_point(box: Box, anchor: Point) -> Point:

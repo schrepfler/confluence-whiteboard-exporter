@@ -107,3 +107,32 @@ def test_without_media_library_icons_are_not_read(tmp_path: Path) -> None:
     frame = _Frame()
     drawings, icons = asyncio.run(read_artwork(frame, [ClipboardElement.model_validate(S3)], None, None))
     assert (drawings, icons, frame.asked) == ({}, {}, [])
+
+
+# A shape kind newer than shape_data.json, as the editor's registry hands it over.
+NEW_KIND = 999
+NEW = {"key": "new-shape", "cat": "basic", "renderer": "graphics", "fit": None, "natural": [200, 200],
+       "fills": [{"color": None, "rule": None, "segs": TRIANGLE}],
+       "strokes": [{"color": None, "rule": None, "segs": TRIANGLE}],
+       "text": [[0.1, 0.1, 0, 0], [0.9, 0.9, 0, 0]]}
+
+
+def test_a_shape_kind_newer_than_the_repo_is_drawn_from_what_the_board_read(caplog) -> None:
+    caplog.set_level(logging.WARNING)
+    shape = {"type": "shape", "shape": NEW_KIND, "position": {"x": 0, "y": 0}, "size": {"x": 200, "y": 100},
+             "text": '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"New"}]}]}'}
+    assert drawing(NEW_KIND, 0, 0, 200, 100).placeholder
+    board = _board(shape, drawings={str(NEW_KIND): kind_entry(NEW)})
+    svg = render_svg(board)
+    assert ">New<" in svg and 'stroke-width="3"' in svg
+    assert not [r for r in caplog.records if "placeholders" in r.getMessage()]
+    # Its text goes in its own text area (here 80% of the box), outline drawn inside the box.
+    drawn = drawing(NEW_KIND, -100, -50, 200, 100, extra=board.drawings)
+    assert drawn.text == (-80, -40, 160, 80) and drawn.inset
+
+
+def test_the_extractor_also_reads_shape_kinds_the_repo_does_not_know(tmp_path: Path) -> None:
+    frame = _Frame()
+    elements = [ClipboardElement.model_validate({"type": "shape", "shape": NEW_KIND})]
+    asyncio.run(read_artwork(frame, elements, None, tmp_path / "media"))
+    assert frame.asked[0] == [NEW_KIND]

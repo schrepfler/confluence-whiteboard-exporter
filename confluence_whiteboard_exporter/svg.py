@@ -38,7 +38,7 @@ from .board import (
 )
 from .connectors import ARROWHEAD_SCALE, ARROWHEADS, End, Route, end_stub, point_at, route, thickness
 from .palette import drawn
-from .shapes import DASH_PERIOD, DASH_SHARE, SHAPE_LINE_WIDTH, Section, dash_layout, drawing, fmt, inset_outline, kind_label, resolve
+from .shapes import DASH_PERIOD, DASH_SHARE, SHAPE_LINE_WIDTH, Section, dash_layout, drawing, fmt, kind_label, resolve
 
 log = logging.getLogger(__name__)
 
@@ -292,7 +292,7 @@ def _shape(node: Node, box: Box, smap: dict[int, int], drawings: dict[int, dict]
     shape = drawing(node.shape_kind, x, y, w, h, smap, drawings)
     # The editor draws the outline inside the box: its outer edge is the box
     # edge (but see inset_outline). The text area stays the whole box's.
-    i = OUTLINE_INSET if inset_outline(resolve(node.shape_kind, smap)) else 0.0
+    i = OUTLINE_INSET if shape.inset else 0.0
     outline = drawing(node.shape_kind, x + i, y + i, max(w - 2 * i, 0.0), max(h - 2 * i, 0.0), smap, drawings)
     colours = {
         "fill": node.fill.hex if node.fill else "transparent",

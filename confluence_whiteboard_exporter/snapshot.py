@@ -33,6 +33,11 @@ class SnapshotError(Exception):
 class Snapshot:
     geometry: Json  # as geometry.json: spec_hash, cells, editor_bundle
     images: dict[str, bytes] = field(default_factory=dict)  # PNG per cell name
+    # The icon packs the editor offers, read with the board (not saved):
+    # {pack: {"icons": n, "with_svg": n, "sample": whether one downloaded}},
+    # a pack None if it could not be found; None if the editor's icon
+    # loader was not found at all.
+    packs: dict[str, Json | None] | None = None
 
     @property
     def missing(self) -> list[str]:
@@ -69,13 +74,13 @@ def take(cells: list[Cell], state: Json) -> Snapshot:
         raise SnapshotError(f"no saved browser session at {session}; run `confluence-whiteboard-exporter "
                             "auth attach` first")
     try:
-        board, centres, geometry, bundle, images = asyncio.run(
+        board, centres, geometry, bundle, images, packs = asyncio.run(
             _read(state["base_url"], state["space"], state["board_id"], session, cells))
     except SessionExpiredError as e:
         raise SnapshotError(str(e)) from e
     golden = match_board(cells, board, centres, geometry)
     golden["editor_bundle"] = bundle
-    return Snapshot(golden, images)
+    return Snapshot(golden, images, packs)
 
 
 async def _read(base_url: str, space: str, board_id: str, session: Path, cells: list[Cell]) -> tuple:
@@ -101,7 +106,29 @@ async def _read(base_url: str, space: str, board_id: str, session: Path, cells: 
         images = await capture_cells(page, frame, rects)
         await fetch_editor_font(page, frame, editor_font_path())
         await _cache_artwork(frame, cells)
-        return board, centres, geometry, bundle, images
+        return board, centres, geometry, bundle, images, await _read_packs(frame)
+
+
+async def _read_packs(frame) -> dict[str, Json | None] | None:  # noqa: ANN001 - a Playwright frame
+    """What each icon pack the editor offers holds, and whether its icons
+    can be read: every one names an SVG file and one downloads."""
+    names = await frame.evaluate("() => globalThis.__whiteboardExporterGraphics.libraryCollections()")
+    if names is None:
+        return None
+    catalogue = await frame.evaluate("(c) => globalThis.__whiteboardExporterGraphics.libraryCatalogue(c)", names)
+    packs: dict[str, Json | None] = {}
+    for name in names:
+        categories = catalogue.get(name)
+        if not categories:
+            packs[name] = None
+            continue
+        icons = [(category, icon, svg) for category, items in categories.items() for icon, svg in items]
+        sample = next(([category, icon] for category, icon, svg in icons if svg), None)
+        got = await frame.evaluate("(i) => globalThis.__whiteboardExporterGraphics.libraryIcons(i)",
+                                   [{"collection": name, "category": sample[0], "iconId": sample[1]}] if sample else [])
+        packs[name] = {"icons": len(icons), "with_svg": sum(1 for *_, svg in icons if svg),
+                       "sample": any("<svg" in v for v in got.values())}
+    return packs
 
 
 async def _cache_artwork(frame, cells: list[Cell]) -> None:  # noqa: ANN001 - a Playwright frame

@@ -359,8 +359,11 @@ stored in `confluence_whiteboard_exporter/shape_data.json`, except the
 icons: their artwork is Atlassian's and is not in the repo. The extractor
 reads the drawings of the icons a board uses from the live editor
 (`graphics_probe.js`) into the board's dump, in the same form; without them
-an icon is a placeholder with its label below, and a warning names it. The
-icons are drawn as they are, and so is the actor: the editor insets every
+an icon is a placeholder with its label below, and a warning names it. A
+kind newer than `shape_data.json` is read the same way, its definition and
+drawing kept in the dump, so it draws (and its text sits and grows) as in
+the editor before the data is refreshed. The icons are drawn as they are,
+and so is the actor: the editor insets every
 other kind's outline by half its width, but these drawings leave room of
 their own. To refresh the data after an editor update:
 

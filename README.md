@@ -119,9 +119,12 @@ shapes (server, cloud, user, ...) and library icons (Atlassian, AWS, Azure,
 Google Cloud) are Atlassian's and the clouds' artwork, which this repo does
 not carry: when a board is extracted, the artwork of the icons it uses is
 read from the live editor into its own `dump.json` and `media/` folder, so
-the exports draw the real icons. A board extracted by an earlier version
-shows them as named placeholders until it is extracted again. Draw a kind as
-another with `--shape-map 'server=database'` (svg and html).
+the exports draw the real icons. Icons and packs added to the editor later
+are read the same way, and so is the definition of any shape kind newer
+than this repo's, so new shapes draw as the editor draws them. A board
+extracted by an earlier version shows its icons as named placeholders until
+it is extracted again. Draw a kind as another with `--shape-map
+'server=database'` (svg and html).
 
 Free text, shapes, stickies, sections, connectors with their bends and
 labels, images and freehand lines (drawn straight, end to end) are
@@ -217,7 +220,9 @@ Once the change is understood, `--update-goldens` rewrites
 did not change is left alone, so capture noise does not churn the files.
 The offline tests then show what the export must follow. `reference
 snapshot` does the same update from the command line. Both only read the
-board.
+board. `--live` also lists the icon packs the editor offers: it fails if one
+cannot be read, or if one is new, so that it gets checked before it is added
+to the known packs in `tests/test_reference_live.py`.
 
 ### Data taken from the editor
 

@@ -84,25 +84,41 @@ def _kinds() -> dict[int, dict[str, Any]]:
 def resolve(kind: int | None, shape_map: dict[int, int] | None = None) -> int:
     """The kind whose drawing is used: after the caller's overrides and the
     editor's own reuse of one kind's drawing for another."""
+    return definition(kind, shape_map)[0]
+
+
+def definition(kind: int | None, shape_map: dict[int, int] | None = None,
+               extra: dict[int, dict[str, Any]] | None = None) -> tuple[int, dict[str, Any] | None]:
+    """The kind a shape is drawn as and its definition: one read from the
+    editor for the board (`extra`: an icon's artwork, a kind newer than
+    shape_data.json) first, else the repo's; None for a kind neither has."""
     k = DEFAULT_KIND if kind is None else kind
     k = (shape_map or {}).get(k, k)
     seen = set()
-    while (same := _kinds().get(k, {}).get("same_as")) is not None and k not in seen:
+    while True:
+        spec = (extra or {}).get(k) or _kinds().get(k)
+        same = spec.get("same_as") if spec else None
+        if same is None or k in seen:
+            return k, spec
         seen.add(k)
         k = same
-    return k
+
+
+def known(kind: int) -> bool:
+    """Whether shape_data.json has the kind (the editor may have newer ones)."""
+    return kind in _kinds()
 
 
 def is_icon(kind: int) -> bool:
     return bool(_kinds().get(kind, {}).get("icon"))
 
 
-def inset_outline(kind: int) -> bool:
-    """Whether the editor draws the kind's outline inside its box (half the
+def inset_outline(spec: dict[str, Any] | None) -> bool:
+    """Whether the editor draws a kind's outline inside its box (half the
     line width in from the edge), as it does every kind but the icons, whose
     drawings leave room of their own, and the actor (measured on the
     reference board)."""
-    spec = _kinds().get(kind, {})
+    spec = spec or {}
     return spec.get("category") != "advanced" and spec.get("key") != "actor"
 
 
@@ -156,14 +172,14 @@ class Drawing:
     graphic: Box  # where the drawing sits
     text: Box | None  # where its text goes; None if the kind takes no text
     placeholder: bool = False  # no drawing available: an icon, or an unknown kind
+    inset: bool = True  # its outline is drawn inside the box: see inset_outline
 
 
 def drawing(kind: int | None, x: float, y: float, w: float, h: float, shape_map: dict[int, int] | None = None,
             extra: dict[int, dict[str, Any]] | None = None) -> Drawing:
     """How to draw a shape of `kind` in the box (x, y, w, h). `extra` holds
-    drawings read for a board (an icon kind's artwork), which come first."""
-    k = resolve(kind, shape_map)
-    spec = (extra or {}).get(k) or _kinds().get(k)
+    definitions read for a board (see `definition`), which come first."""
+    k, spec = definition(kind, shape_map, extra)
     box = (x, y, w, h)
     if spec is None:  # a kind this version does not know
         return Drawing(k, sections(SHARP_RECTANGLE, *box), box, box, placeholder=True)
@@ -185,7 +201,7 @@ def drawing(kind: int | None, x: float, y: float, w: float, h: float, shape_map:
 
     if "fills" not in spec:  # an icon whose artwork was not read
         return Drawing(k, sections(PLACEHOLDER_KIND, *graphic), graphic, text, placeholder=True)
-    return Drawing(k, sections(k, *graphic, spec=spec), graphic, text)
+    return Drawing(k, sections(k, *graphic, spec=spec), graphic, text, inset=inset_outline(spec))
 
 
 # The editor's basic shapes keep their text in a content box of their own
@@ -242,7 +258,8 @@ class TextArea(NamedTuple):
         return ((self.top_share + self.bottom_share) * h + self.top_offset + self.bottom_offset) / 2 - h / 2
 
 
-def text_area(kind: int | None, w: float, shape_map: dict[int, int] | None = None) -> TextArea | None:
+def text_area(kind: int | None, w: float, shape_map: dict[int, int] | None = None,
+              extra: dict[int, dict[str, Any]] | None = None) -> TextArea | None:
     """Where a shape `w` wide holds its text; None for a kind without text.
 
     The editor's content boxes: the box less the corner for rounded
@@ -250,8 +267,7 @@ def text_area(kind: int | None, w: float, shape_map: dict[int, int] | None = Non
     area for drawn shapes, and for drawings with a label below, the space
     under the drawing, which keeps its own aspect ratio.
     """
-    k = resolve(kind, shape_map)
-    spec = _kinds().get(k)
+    _, spec = definition(kind, shape_map, extra)
     if spec is None or spec.get("no_text"):
         return None
     key = spec["key"]
@@ -275,7 +291,7 @@ def sections(kind: int, x: float, y: float, w: float, h: float, spec: dict[str, 
     fills first. A section is painted with one of the element's colours,
     or with a colour of its own (library icons)."""
     spec = spec if spec is not None else _kinds()[kind]
-    mode = dash_mode(kind)
+    mode = dash_mode(kind, spec)
     out = []
     for paint in ("fill", "stroke"):
         for sec in spec.get(f"{paint}s", ()):
@@ -286,7 +302,7 @@ def sections(kind: int, x: float, y: float, w: float, h: float, spec: dict[str, 
     return tuple(out)
 
 
-def dash_mode(kind: int) -> str:
+def dash_mode(kind: int, spec: dict[str, Any] | None = None) -> str:
     """How the editor lays dashes along a kind's outline.
 
     "even-left", "even-right": a whole number of periods evenly round the
@@ -295,7 +311,7 @@ def dash_mode(kind: int) -> str:
     each edge carries whole periods (the other rounded polygons). "runs":
     whole periods between sharp corners, centred on dashes (drawn outlines).
     """
-    renderer = _kinds().get(kind, {}).get("renderer")
+    renderer = (spec or _kinds().get(kind, {})).get("renderer")
     if renderer == "ellipse":
         return "even-right"
     if renderer == "roundedPolygon":

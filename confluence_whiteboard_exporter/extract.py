@@ -25,7 +25,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from .drawings import kind_entry
 from .model import BoardMeta, ClipboardElement, DumpFile, FiberDump
-from .shapes import is_icon
+from .shapes import is_icon, known
 from .storage import atomic_write_text, chrome_profile_dir, dump_path, ensure_dir, media_dir
 
 
@@ -434,14 +434,18 @@ async def _capture_media(
 
 async def read_artwork(frame: Frame, elements: list[ClipboardElement], fiber_dump: FiberDump | None,
                        target_media: Path | None) -> tuple[dict[str, dict], dict[str, str]]:
-    """The artwork of the board's icons, read from the editor: the icon
-    shapes' drawings, by kind, and the library icons' SVG files, saved in
-    `target_media` (none without it), by icon key. What cannot be read is
-    left out, and drawn as a placeholder."""
-    kinds = {e.shape for e in elements if e.type == "shape" and isinstance(e.shape, int) and is_icon(e.shape)}
+    """What the board's shapes and icons are drawn with that the repo does
+    not carry, read from the editor: the definitions of its icon shapes and
+    of any shape kind newer than shape_data.json, by kind, and its library
+    icons' SVG files, saved in `target_media` (none without it), by icon
+    key. What cannot be read is left out, and drawn as a placeholder."""
+    def wanted_kind(kind: object) -> bool:
+        return isinstance(kind, int) and (is_icon(kind) or not known(kind))
+
+    kinds = {e.shape for e in elements if e.type == "shape" and wanted_kind(e.shape)}
     if fiber_dump is not None:
         kinds |= {v["sh"] for v in fiber_dump.board.values()
-                  if isinstance(v, dict) and v.get("t") == "shape" and isinstance(v.get("sh"), int) and is_icon(v["sh"])}
+                  if isinstance(v, dict) and v.get("t") == "shape" and wanted_kind(v.get("sh"))}
     wanted = {(e.collection, e.category, e.iconId) for e in elements
               if e.type == "advanced-icon" and e.collection and e.category and e.iconId}
     drawings: dict[str, dict] = {}

@@ -80,6 +80,9 @@ def pytest_terminal_summary(terminalreporter, config: pytest.Config) -> None:  #
     tr.write_line(f"editor now: {live.geometry.get('editor_bundle')}; references from: {then or 'none'}")
     if live.missing:
         tr.write_line(f"{len(live.missing)} element(s) not found on the board: {', '.join(live.missing[:10])}")
+    if live.packs is not None:
+        tr.write_line("icon packs: " + ", ".join(
+            f"{name} {pack['icons']}" if pack else f"{name} (not found)" for name, pack in sorted(live.packs.items())))
     if "changed" in found:
         changed = found["changed"]
         if changed is None:

@@ -304,6 +304,14 @@ Comparing them showed one more rule: the icons, and the actor, are drawn
 without the half-line-width inset the editor gives every other kind's
 outline.
 
+New icons and packs: the editor's icon loader imports one module per pack
+(atlassian, aws, azure, gcp: 1,737 icons, all read and downloaded once);
+the extractor looks icons up there by name, so new icons and packs that
+follow the same form need no change. Shape kinds newer than
+`shape_data.json` are read from the editor with the board, like the icons.
+`pytest --live` lists the loader's packs and fails if one cannot be read or
+is not yet among those checked.
+
 ## Later
 
 - Export a space straight into an Obsidian vault (`--vault`, `--vault-prefix`)

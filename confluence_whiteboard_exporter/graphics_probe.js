@@ -5,11 +5,12 @@
 // Google Cloud) are Atlassian's and the clouds' artwork, which the repo does
 // not carry: the extractor reads what a board uses into its own dump instead.
 //
-//   shapeDrawings(kinds)  -> {kind: definition with its drawing}, as
+//   shapeDrawings(kinds)  -> {kind: definition, with its drawing if it has one}, as
 //                            drawings.kind_entry reads it (the same form as
 //                            scripts/dump_shapes.js)
 //   libraryIcons(icons)   -> {"collection/category/iconId": SVG text}
 //   libraryCatalogue(cs)  -> {collection: {category: [[iconId, SVG path]]}}
+//   libraryCollections()  -> the packs the editor's icon loader offers
 //
 // Modules and exports are found by shape, not name: the bundle's export
 // names change with every deploy.
@@ -70,16 +71,20 @@
     const out = {};
     for (const kind of kinds) {
       const def = reg[kind];
-      const graphic = def && (def.graphic || def.graphicForSvgRendering);
-      if (!graphic) continue;
-      out[kind] = {
+      if (!def) continue;
+      const rec = {
         key: def.key, cat: def.category || null, renderer: def.rendererType,
         replicates: def.replicatedShape ?? null, exterior: def.exteriorTextArea || null,
         noText: !!def.textDisabled, fit: probe(def.boundingBoxToRenderBox),
-        natural: [graphic.naturalSize[0], graphic.naturalSize[1]],
-        fills: graphic.fills.map(section), strokes: graphic.strokes.map(section),
-        text: graphic.textArea ? [point(graphic.textArea.topLeft), point(graphic.textArea.bottomRight)] : null,
       };
+      const graphic = def.graphic || def.graphicForSvgRendering;
+      if (graphic) {  // a kind that reuses another's drawing has none of its own
+        rec.natural = [graphic.naturalSize[0], graphic.naturalSize[1]];
+        rec.fills = graphic.fills.map(section);
+        rec.strokes = graphic.strokes.map(section);
+        rec.text = graphic.textArea ? [point(graphic.textArea.topLeft), point(graphic.textArea.bottomRight)] : null;
+      }
+      out[kind] = rec;
     }
     return out;
   }
@@ -120,6 +125,33 @@
     return null;
   }
 
+  // The packs the editor's icon loader offers: the collection modules the
+  // loader's module imports, which is where a new pack would be added.
+  async function libraryCollections() {
+    const isLoader = (v) => v && typeof v === 'object'
+      && typeof v.getCollection === 'function' && typeof v.loadIconData === 'function';
+    const holdsLoader = async (url) => {
+      try { return Object.values(await import(url)).some(isLoader); } catch (_e) { return false; }
+    };
+    let url = null;
+    for (const u of moduleUrls().filter((u) => /\/lazily-loaded-svg-/.test(u))) {
+      if (await holdsLoader(u)) { url = u; break; }
+    }
+    if (!url) {
+      for (const u of moduleUrls()) {
+        let text;
+        try { text = await (await fetch(u)).text(); } catch (_e) { continue; }
+        const m = /["'`]\.\/(lazily-loaded-svg-[A-Za-z0-9_-]+\.js)["'`]/.exec(text);
+        if (m && await holdsLoader(new URL(m[1], u).href)) { url = new URL(m[1], u).href; break; }
+      }
+    }
+    if (!url) return null;
+    const text = await (await fetch(url)).text();
+    const names = [...text.matchAll(/import\(`\.\/([A-Za-z0-9_-]+)\.js`\)/g)]
+      .map((m) => m[1].replace(/-[A-Za-z0-9_-]{8}$/, ''));
+    return [...new Set(names)].sort();
+  }
+
   // How many icons each collection has, and how many of them name an SVG file.
   async function libraryCatalogue(collections) {
     const out = {};
@@ -151,5 +183,5 @@
     return out;
   }
 
-  globalThis.__whiteboardExporterGraphics = { shapeDrawings, libraryIcons, libraryCatalogue };
+  globalThis.__whiteboardExporterGraphics = { shapeDrawings, libraryIcons, libraryCatalogue, libraryCollections };
 })();
