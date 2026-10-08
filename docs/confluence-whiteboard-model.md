@@ -369,7 +369,9 @@ their own. To refresh the data after an editor update:
    JSON dump.
 2. Run `pbpaste | uv run scripts/build_shape_data.py`.
 
-**Library icons** (AWS, Azure, GCP; `advanced-icon`) come from collection
+**Library icons** (`advanced-icon`) come from four collections: `atlassian`
+(26 icons in 6 categories), `aws` (814 in 27), `azure` (682 in 29) and
+`gcp` (215 in 14), all of which the extractor reads. They come from collection
 modules the editor loads on demand: per category, a map from icon id to
 its `graphic` (the drawing the canvas paints, 64 units square, in colours
 of its own) and its `svg`, the original SVG file on the site

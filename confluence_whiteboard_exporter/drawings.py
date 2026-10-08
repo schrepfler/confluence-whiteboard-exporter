@@ -2,9 +2,9 @@
 
 Shapes are drawn from these: the basic, flowchart and UML kinds from
 shape_data.json, which the repo carries; the icon kinds and library icons
-(AWS, Azure, GCP) from what the extractor reads off the live editor for a
-board's dump (graphics_probe.js), since their artwork is not ours to
-publish.
+(Atlassian, AWS, Azure, Google Cloud) from what the extractor reads off the
+live editor for a board's dump (graphics_probe.js), since their artwork is
+not ours to publish.
 
 A point is (x fraction, y fraction, x offset, y offset) and lands at
 `box corner + fraction * box size + offset`, so offsets (rounded corners,

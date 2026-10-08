@@ -1,14 +1,15 @@
 // Read the artwork a board's icons are drawn with, from the editor itself.
 //
 // Injected into the board's frame by extract.py. Read-only. The icon shapes
-// (cloud, key, server, ...) and the library icons (AWS, Azure, GCP) are
-// Atlassian's and the clouds' artwork, which the repo does not carry: the
-// extractor reads what a board uses into its own dump instead.
+// (cloud, key, server, ...) and the library icons (Atlassian, AWS, Azure,
+// Google Cloud) are Atlassian's and the clouds' artwork, which the repo does
+// not carry: the extractor reads what a board uses into its own dump instead.
 //
 //   shapeDrawings(kinds)  -> {kind: definition with its drawing}, as
 //                            drawings.kind_entry reads it (the same form as
 //                            scripts/dump_shapes.js)
 //   libraryIcons(icons)   -> {"collection/category/iconId": SVG text}
+//   libraryCatalogue(cs)  -> {collection: {category: [[iconId, SVG path]]}}
 //
 // Modules and exports are found by shape, not name: the bundle's export
 // names change with every deploy.
@@ -83,24 +84,56 @@
     return out;
   }
 
-  // A collection's module maps each category's icons to {svg, graphic, ...};
-  // `svg` is the icon's own SVG file on the site. The module is loaded once
-  // an icon of it is drawn; otherwise it is found where other modules name it.
+  // A collection's module (atlassian, aws, azure, gcp) maps each category's
+  // icons to {svg, graphic, ...}; `svg` is the icon's own SVG file on the
+  // site. The module is loaded once an icon of it is drawn, and otherwise
+  // found where other modules name it. Modules named alike (the atlassian-*
+  // themes) are told apart by what they export.
+  function asCollection(mod, collection) {
+    const value = mod && mod[collection];
+    const isCollection = value && typeof value === 'object'
+      && Object.values(value).some((category) => category && category.items instanceof Map);
+    return isCollection ? value : null;
+  }
+
   async function collectionModule(collection) {
     const own = new RegExp(`/${collection}-[A-Za-z0-9_-]+\\.js($|\\?)`);
-    let url = moduleUrls().find((u) => own.test(u));
-    if (!url) {
-      const named = new RegExp(`["'\`]\\./(${collection}-[A-Za-z0-9_-]+\\.js)["'\`]`);
-      for (const u of moduleUrls()) {
-        let text;
-        try { text = await (await fetch(u)).text(); } catch (_e) { continue; }
-        const m = named.exec(text);
-        if (m) { url = new URL(m[1], u).href; break; }
+    const named = new RegExp(`["'\`]\\./(${collection}-[A-Za-z0-9_-]+\\.js)["'\`]`, 'g');
+    const tried = new Set();
+    const attempt = async (url) => {
+      if (tried.has(url)) return null;
+      tried.add(url);
+      try { return asCollection(await import(url), collection); } catch (_e) { return null; }
+    };
+    for (const url of moduleUrls().filter((u) => own.test(u))) {
+      const found = await attempt(url);
+      if (found) return found;
+    }
+    for (const u of moduleUrls()) {
+      let text;
+      try { text = await (await fetch(u)).text(); } catch (_e) { continue; }
+      for (const m of text.matchAll(named)) {
+        const found = await attempt(new URL(m[1], u).href);
+        if (found) return found;
       }
     }
-    if (!url) return null;
-    const mod = await import(url);
-    return mod[collection] ?? Object.values(mod).find((v) => v && typeof v === 'object');
+    return null;
+  }
+
+  // How many icons each collection has, and how many of them name an SVG file.
+  async function libraryCatalogue(collections) {
+    const out = {};
+    for (const collection of collections) {
+      const value = await collectionModule(collection);
+      if (!value) { out[collection] = null; continue; }
+      const categories = {};
+      for (const [name, category] of Object.entries(value)) {
+        if (!(category && category.items instanceof Map)) continue;
+        categories[name] = [...category.items.entries()].map(([id, item]) => [id, typeof item.svg === 'string' ? item.svg : null]);
+      }
+      out[collection] = categories;
+    }
+    return out;
   }
 
   async function libraryIcons(icons) {
@@ -118,5 +151,5 @@
     return out;
   }
 
-  globalThis.__whiteboardExporterGraphics = { shapeDrawings, libraryIcons };
+  globalThis.__whiteboardExporterGraphics = { shapeDrawings, libraryIcons, libraryCatalogue };
 })();

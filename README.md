@@ -115,13 +115,13 @@ folder.
 ### What is drawn
 
 All 89 shape kinds are drawn from the editor's definitions. The 21 icon
-shapes (server, cloud, user, ...) and library icons (AWS, Azure, GCP) are
-Atlassian's and the clouds' artwork, which this repo does not carry: when a
-board is extracted, the artwork of the icons it uses is read from the live
-editor into its own `dump.json` and `media/` folder, so the exports draw the
-real icons. A board extracted by an earlier version shows them as named
-placeholders until it is extracted again. Draw a kind as another with
-`--shape-map 'server=database'` (svg and html).
+shapes (server, cloud, user, ...) and library icons (Atlassian, AWS, Azure,
+Google Cloud) are Atlassian's and the clouds' artwork, which this repo does
+not carry: when a board is extracted, the artwork of the icons it uses is
+read from the live editor into its own `dump.json` and `media/` folder, so
+the exports draw the real icons. A board extracted by an earlier version
+shows them as named placeholders until it is extracted again. Draw a kind as
+another with `--shape-map 'server=database'` (svg and html).
 
 Free text, shapes, stickies, sections, connectors with their bends and
 labels, images and freehand lines (drawn straight, end to end) are

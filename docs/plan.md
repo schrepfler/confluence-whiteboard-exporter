@@ -18,8 +18,9 @@ Checked board by board, side by side with the live editor:
 - Connectors: curved, straight and right-angled routes, bend handles,
   rounded bends, line ends, and labels on the line or to either side.
 - Images, including ones still loading when the board was copied.
-- Icon shapes and library icons (AWS, Azure, GCP) drawn with their real
-  artwork, read from the editor per board; the repo carries none of it.
+- Icon shapes and library icons (Atlassian, AWS, Azure, Google Cloud) drawn
+  with their real artwork, read from the editor per board; the repo carries
+  none of it.
 - Stickies and sections, sized and drawn as the editor does; in JSON
   Canvas a coloured card and a group with the section's title.
 - The Confluence API token: a clear message when it is rejected.
@@ -286,9 +287,10 @@ segments, and rebuilding the board changes no existing cell.
 ## Icons
 
 The shape picker's "more shapes" (the 21 icon shapes) and the library icons
-(AWS, Azure, GCP) were placeholders: their artwork is Atlassian's and the
-clouds', and the repo is public. Both are vector drawings in the editor,
-so the extractor now reads the ones a board uses into its dump:
+(Atlassian, AWS, Azure, Google Cloud) were placeholders: their artwork is
+Atlassian's and the clouds', and the repo is public. Both are vector
+drawings in the editor, so the extractor now reads the ones a board uses
+into its dump:
 
 - Icon shapes: from the editor's shape registry, the same drawing form as
   `shape_data.json`, kept in the dump's `drawings`.
