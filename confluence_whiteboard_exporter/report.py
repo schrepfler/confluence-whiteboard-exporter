@@ -25,8 +25,9 @@ from pathlib import Path
 from .board import from_dump, icon_key
 from .compare import CellResult, compare
 from .model import ClipboardElement, DumpFile
-from .reference import CELL_H, Cell, Json, cell_rects, cell_slug, payload
+from .reference import CELL_H, Cell, Json, cell_rects, payload
 from .shapes import is_icon
+from .snapshot import image_path
 from .svg import render_svg
 
 BOX_TOLERANCE = 1.5  # board units; as in tests/test_reference_geometry.py
@@ -54,9 +55,10 @@ def build(cells: list[Cell], golden: Json, image_dir: Path, font: Path | None = 
 
     ours = render_cells(cells, font, artwork)
     notes = {c.name: placeholder(c, artwork) for c in cells}
+    by_name = {c.name: c for c in cells}
     rows = []
     for result in compare(cells, golden):
-        editor_path = image_dir / f"{cell_slug(result.name)}.png"
+        editor_path = image_path(image_dir.parent, by_name[result.name])
         mine = ours[result.name]
         score = diff_png = editor_png = None
         if editor_path.exists():
@@ -83,6 +85,8 @@ def placeholder(cell: Cell, artwork: Json | None = None) -> str | None:
             return "a library icon whose artwork was not read: a named tile stands in (run reference snapshot)"
         if e["type"] == "shape" and is_icon(e["shape"]) and str(e["shape"]) not in artwork.get("drawings", {}):
             return "an icon shape whose artwork was not read: a tile stands in (run reference snapshot)"
+        if e["type"] == "sticker" and e["spriteId"] not in artwork.get("stickers", {}):
+            return "a sticker whose image was not read: a tile stands in (run reference snapshot)"
     return None
 
 
@@ -104,10 +108,11 @@ def render_cells(cells: list[Cell], font: Path | None = None, artwork: Json | No
     artwork = artwork or {}
     icons = {key: "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
              for key, svg in artwork.get("icons", {}).items()}
+    stickers = {sprite: "data:image/webp;base64," + data for sprite, data in artwork.get("stickers", {}).items()}
     board = from_dump(DumpFile.model_validate(
         {"board": {"boardId": "reference", "title": "reference", "spaceKey": "REF"},
          "strategy": "clipboard", "elements": [ClipboardElement.model_validate(e) for e in elements],
-         "drawings": artwork.get("drawings", {}), "icons": icons}))
+         "drawings": artwork.get("drawings", {}), "icons": icons, "stickers": stickers}))
     svg = render_svg(board)
     face = ""
     if font is not None and font.exists():

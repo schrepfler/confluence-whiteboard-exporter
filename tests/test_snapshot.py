@@ -68,7 +68,7 @@ def test_a_snapshot_reads_back_as_written(tmp_path: Path) -> None:
     snap = _snapshot()
     (tmp_path / "images").mkdir()
     (tmp_path / "images" / "stale.png").write_bytes(b"old")
-    write(snap, tmp_path)
+    write(snap, tmp_path, [Cell("cell/a")])
     again = load(tmp_path, [Cell("cell/a")])
     assert again.geometry == copy.deepcopy(snap.geometry) and again.images == snap.images
     assert not (tmp_path / "images" / "stale.png").exists(), "images of cells no longer in the spec go"
@@ -104,3 +104,18 @@ def test_a_spec_that_gained_cells_still_keeps_the_others(tmp_path: Path) -> None
     grown.images["cell/a"] = _png(20)[:-1] + b"\x00"  # other bytes, the same picture: must not be written
     assert refresh(tmp_path, [Cell("cell/a"), Cell("cell/new")], grown) == {"cell/new": ["new"]}
     assert (tmp_path / "images" / "cell-a.png").read_bytes() == first.images["cell/a"]
+
+
+def test_images_of_cells_showing_artwork_are_kept_outside_the_references(tmp_path: Path) -> None:
+    repo, private = tmp_path / "golden", tmp_path / "cache"
+    cells = [Cell("cell/a"), Cell("sticker/x", [{"type": "sticker", "spriteId": "x"}])]
+    snap = _snapshot()
+    snap.geometry["cells"]["sticker/x"] = []
+    snap.images["sticker/x"] = _png(30)
+    (repo / "images").mkdir(parents=True)
+    (repo / "images" / "sticker-x.png").write_bytes(b"committed before")
+    write(snap, repo, cells, artwork_dir=private)
+    assert sorted(p.name for p in (repo / "images").iterdir()) == ["cell-a.png"], "none of the artwork in the repo"
+    assert (private / "sticker-x.png").read_bytes() == snap.images["sticker/x"]
+    assert load(repo, cells, artwork_dir=private).images == snap.images
+    assert set(load(repo, cells, artwork_dir=tmp_path / "elsewhere").images) == {"cell/a"}, "a clone has none"

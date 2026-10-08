@@ -89,7 +89,7 @@ def render_canvas(
     boxes = layout(board, CANVAS_METRICS)
     # Sections are groups, listed first so they sit under what lies on them.
     ordered = sorted(board.nodes, key=lambda n: n.kind is not Kind.SECTION)
-    nodes = [_node(n, boxes[n.id], vault_prefix, board.icons) for n in ordered]
+    nodes = [_node(n, boxes[n.id], vault_prefix, board) for n in ordered]
     dropped_caps: Counter[str] = Counter()
     edges: list[CanvasEdge] = []
     loose = 0
@@ -131,15 +131,19 @@ def _warn(board: Board, loose: int, dropped_caps: Counter[str]) -> None:
         log.warning("%s: JSON Canvas has no such line ends; drawn plain: %s", where, caps)
 
 
-def _node(n: Node, box: tuple[float, float, float, float], vault_prefix: str, icons: dict[str, str]) -> CanvasNode:
+def _node(n: Node, box: tuple[float, float, float, float], vault_prefix: str, board: Board) -> CanvasNode:
     x, y, w, h = (int(round(v)) for v in box)
     if n.kind is Kind.IMAGE and n.image:
         if n.image.href is None:  # not downloaded
             return CanvasNode(id=n.id, type="text", x=x, y=y, width=w, height=h, text="*(image not downloaded)*")
         return CanvasNode(id=n.id, type="file", x=x, y=y, width=w, height=h,
                           file=_join(vault_prefix, n.image.href))
-    if n.kind is Kind.ICON and n.icon_key and (href := icons.get(n.icon_key)):  # its SVG file
+    if n.kind is Kind.ICON and n.icon_key and (href := board.icons.get(n.icon_key)):  # its SVG file
         return CanvasNode(id=n.id, type="file", x=x, y=y, width=w, height=h, file=_join(vault_prefix, href))
+    if n.kind is Kind.STICKER and n.sprite and (href := board.stickers.get(n.sprite)):  # its image
+        return CanvasNode(id=n.id, type="file", x=x, y=y, width=w, height=h, file=_join(vault_prefix, href))
+    if n.kind is Kind.STICKER:  # its image was not read: name it
+        return CanvasNode(id=n.id, type="text", x=x, y=y, width=w, height=h, text=f"*{n.sprite or 'sticker'}*")
     if n.kind is Kind.ICON:  # its artwork is not available: name it
         text = f"*{n.icon}*" + (f"\n\n{n.markdown}" if n.markdown else "")
         return CanvasNode(id=n.id, type="text", x=x, y=y, width=w, height=h, color=_color(n.stroke), text=text)

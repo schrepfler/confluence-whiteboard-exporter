@@ -179,7 +179,8 @@ Each element type declares which box it uses
 | `issue` | YIssue | Jira issue card | ❌ |
 | `smartLink` | YSmartLink | Link card (unfurled URL) | ❌ |
 | `smartConnector` | YSmartConnector | Jira issue relationship line | ❌ |
-| `stamp`, `sticker` | YStamp, YSticker | Stamps / reactions | ❌ |
+| `sticker` | YSticker | Sticker from one of the editor's packs (`spriteId`) | ✅ (its image, read per board) |
+| `stamp` | YStamp | Stamp / reaction (`spriteId`) | ❌ |
 | `icon` | YIcon | Icon from an icon collection | ❌ |
 | `drawing` | YDrawing | Pen drawing | ❌ |
 | `composite-shape` | YCompositeShape | Multi-part shape (UML class, …) | ❌ |
@@ -379,6 +380,19 @@ also has connectors, stickers (a separate element type), the four icon
 collections below and, as an experiment, Rovo diagram generation. The
 Atlassian collection shows only where the `atlassianArchitectureIcons`
 flag is on; the others always do.
+
+**Stickers** (`sticker`) store `position` (the centre), `size` (85 square by
+default), `rotation` (radians, clockwise on screen, about the centre) and
+`spriteId`; in Yjs, `si` and the usual `p`, `s` and `r`. The editor draws
+them from sprite sheets (`stickers-<pack>.webp` and its `.data.br` frames),
+and its packs (24 of them, 246 stickers: architecture icons, facilitation,
+arrows, squiggles, racing, Atlassian's internal set, ...) give each sticker
+its own WebP on the site (`/whiteboards/assets/<name>.<hash>.webp`). Only
+the architecture packs are exported as data, so the extractor reads the rest
+from the source of the module that defines them; it saves the image of each
+sticker a board uses in its `media/`. The SVG and HTML draw it turned about
+its centre; JSON Canvas points a file node at it. The editor reports a
+turned sticker's bounds as the upright box round it.
 
 **Library icons** (`advanced-icon`) come from four collections: `atlassian`
 (26 icons in 6 categories), `aws` (814 in 27), `azure` (682 in 29) and

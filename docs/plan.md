@@ -35,9 +35,10 @@ Checked board by board, side by side with the live editor:
   placeholders, with a warning.
 - **The font** is Atlassian Sans only where it is installed; elsewhere a
   system font stands in, so line breaks can differ slightly.
-- **Unsupported element types** (tables, mind maps, cards, Jira issues,
-  …) are left out with a warning. Supporting one needs a sample board
-  containing it, which a scratch board in a personal space can provide.
+- **Unsupported element types** (stamps, tables, mind maps, cards, Jira
+  issues, …) are left out with a warning. Supporting one needs a sample
+  board containing it, which a scratch board in a personal space can
+  provide.
 - **A sticky's author name**, shown when `isAuthorVisible` is set, is not
   drawn: the board stores only an account id.
 - **Dark theme**: colours are resolved against the light theme only.
@@ -311,6 +312,24 @@ follow the same form need no change. Shape kinds newer than
 `shape_data.json` are read from the editor with the board, like the icons.
 `pytest --live` lists the loader's packs and fails if one cannot be read or
 is not yet among those checked.
+
+## Stickers
+
+Stickers (`sticker`: a box, a rotation and a `spriteId`) were left out.
+Their artwork is the editor's, a WebP per sticker on the site, so it is
+read per board like the icons: the extractor finds each sticker's image
+among the editor's 24 sticker packs (246 stickers; most packs are only in a
+module's source, which it reads) and saves the ones a board uses in its
+`media/`. Nine reference cells (seven packs, a large and a turned sticker)
+match the editor's geometry and drawing: 254 cells, 253 pass and 1 warn
+(list bullets) in the report. One rule: the editor reports a turned
+sticker's bounds as the upright box round it, which the comparison now
+does too. Stamps (`stamp`) have the same form and are next.
+
+The reference images of cells that show artwork (the icon shapes, library
+icons and stickers) are screenshots of that artwork, so they are kept in
+the per-user cache like the artwork itself, and the ones committed earlier
+were removed from the repository's history.
 
 ## Later
 

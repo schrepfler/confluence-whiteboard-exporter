@@ -94,7 +94,8 @@ command has `--help`.
   fill or outline, labels join on their edge, line ends other than arrows
   are drawn plain, connectors with a loose end are left out, and dividers
   become thin cards. Stickies are cards in their colour, sections are groups
-  named by their title, and library icons point at their SVG files.
+  named by their title, and library icons and stickers point at their
+  image files.
   `--collision-fix` nudges overlapping cards apart.
 - **svg**: a faithful static replica. Shapes are drawn from the editor's own
   definitions and grown to fit their text as the editor grows them; text is
@@ -126,9 +127,10 @@ extracted by an earlier version shows its icons as named placeholders until
 it is extracted again. Draw a kind as another with `--shape-map
 'server=database'` (svg and html).
 
-Free text, shapes, stickies, sections, connectors with their bends and
-labels, images and freehand lines (drawn straight, end to end) are
-supported. Tables, mind maps, cards, Jira issues and the other element types
+Free text, shapes, stickies, sections, stickers (their images read with the
+board, like the icons), connectors with their bends and labels, images and
+freehand lines (drawn straight, end to end) are supported. Tables, mind
+maps, cards, Jira issues, stamps and the other element types
 are left out for now. Anything a format cannot show is reported as a warning
 rather than dropped silently. [docs/plan.md](docs/plan.md) lists what is
 still missing, such as the dark theme.
@@ -171,14 +173,16 @@ board generated from code with every element the export draws, in its
 variations, and what the editor made of it.
 
 - **The spec** (`confluence_whiteboard_exporter/reference.py`) describes a
-  grid of 245 labelled cells: every shape kind, outlines, fills, colours,
+  grid of 254 labelled cells: every shape kind, outlines, fills, colours,
   text alignment, sizes, headings and lists, free text, connectors of every
-  routing, line end, weight and style, bend handles and labels, stickies
-  and sections.
+  routing, line end, weight and style, bend handles and labels, stickies,
+  sections and stickers.
 - **The references** (`tests/reference/golden/`, committed) are the editor's
   drawn geometry for each cell (`geometry.json`: each element's box, each
   connector's path, each label's box) and an image of each cell at 100%
-  (`images/`).
+  (`images/`). The cells that show the editor's artwork (icons, stickers)
+  keep their images in the per-user cache instead, so the repo carries none
+  of it; a clone without them still runs every test, on geometry.
 - **The tests** (`tests/test_reference_geometry.py`) export the spec and
   compare it with the references, one test per cell: boxes within 1.5 board
   units, paths within 2. A cell we do not draw like the editor yet goes in

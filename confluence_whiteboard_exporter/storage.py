@@ -30,6 +30,12 @@ def artwork_cache_path() -> Path:
     return Path(user_cache_dir(APP)) / "artwork.json"
 
 
+def artwork_images_dir() -> Path:
+    """Reference images of the cells that show the editor's artwork (icons,
+    stickers), which the repo does not carry; see snapshot.write."""
+    return Path(user_cache_dir(APP)) / "reference-images"
+
+
 def chrome_profile_dir() -> Path:
     """Private, persistent profile for `auth attach`. Kept out of the shared
     system temp dir so other local users cannot pre-create or read it."""

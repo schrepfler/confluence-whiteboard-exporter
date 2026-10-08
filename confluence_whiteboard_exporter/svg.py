@@ -262,6 +262,8 @@ def _render_node(node: Node, box: Box, smap: dict[int, int], board: Board) -> st
         inner = _sticky(node, box)
     elif node.kind is Kind.SECTION:
         inner = _section_frame(node, box)
+    elif node.kind is Kind.STICKER:
+        inner = _sticker_image(node, box, board.stickers)
     elif node.kind is Kind.LINE and len(node.points) == 2:
         (x1, y1), (x2, y2) = node.points
         width = thickness(int(node.stroke_width))
@@ -278,6 +280,8 @@ def _render_node(node: Node, box: Box, smap: dict[int, int], board: Board) -> st
     kind = ""
     if node.kind is Kind.SHAPE:
         kind = f' data-kind="{resolve(node.shape_kind, smap)}"'
+    if node.rotation:
+        kind += f' data-r="{_fraction(node.rotation)}"'
     return (
         f'<g class="{cls}" data-id="{_xml_escape(node.id)}"{kind} '
         f'data-x="{fmt(x)}" data-y="{fmt(y)}" data-w="{fmt(w)}" data-h="{fmt(h)}">'
@@ -358,6 +362,27 @@ def _sticky(node: Node, box: Box) -> str:
             "</foreignObject>"
         )
     return out
+
+
+def _sticker_image(node: Node, box: Box, stickers: dict[str, str]) -> str:
+    """A sticker: its picture (the image read for the board), turned as on
+    the board; without it, a tile naming the sticker."""
+    x, y, w, h = box
+    if w <= 0 or h <= 0:
+        return ""
+    turn = (f' transform="rotate({fmt(math.degrees(node.rotation))} {fmt(x + w / 2)} {fmt(y + h / 2)})"'
+            if node.rotation else "")
+    if node.sprite and (href := stickers.get(node.sprite)):
+        return (f'<image x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}" href="{_xml_escape(href)}" '
+                f'preserveAspectRatio="xMidYMid meet"{turn}/>')
+    return (
+        f'<g{turn}><rect x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}" rx="{fmt(min(w, h) * 0.15)}" '
+        f'fill="#F7F8F9" stroke="#B7B9BE" stroke-width="1.5" stroke-dasharray="4,3"/>'
+        f'<foreignObject x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}">'
+        f'<div xmlns="http://www.w3.org/1999/xhtml" class="node-text" style="font-size:10px;color:#626F86;'
+        f'text-align:center"><div class="node-body va-middle">{_xml_escape(node.sprite or "sticker")}</div></div>'
+        "</foreignObject></g>"
+    )
 
 
 def section_tab(node: Node, box: Box) -> Box | None:

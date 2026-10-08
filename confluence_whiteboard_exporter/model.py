@@ -69,6 +69,8 @@ class ClipboardElement(BaseModel):
     # Sections: a titled frame.
     title: str | None = None
     hasDropShadow: bool | None = None
+    # Stickers: which sticker (its image is read per board).
+    spriteId: str | None = None
 
     sourceElement: str | None = None
     sourceAnchor: Anchor | None = None
@@ -130,3 +132,4 @@ class DumpFile(BaseModel):
     # them, and the library icons' SVG files by "collection/category/iconId".
     drawings: dict[str, dict[str, Any]] = Field(default_factory=dict)
     icons: dict[str, str] = Field(default_factory=dict)
+    stickers: dict[str, str] = Field(default_factory=dict)  # each sticker's image, by sticker id

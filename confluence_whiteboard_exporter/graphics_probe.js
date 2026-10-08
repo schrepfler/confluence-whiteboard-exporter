@@ -11,6 +11,8 @@
 //   libraryIcons(icons)   -> {"collection/category/iconId": SVG text}
 //   libraryCatalogue(cs)  -> {collection: {category: [[iconId, SVG path]]}}
 //   libraryCollections()  -> the packs the editor's icon loader offers
+//   stickerImages()       -> {stickerId: its WebP's path on the site}
+//   download(paths)       -> {key: base64 of the file at paths[key]}
 //
 // Modules and exports are found by shape, not name: the bundle's export
 // names change with every deploy.
@@ -152,6 +154,53 @@
     return [...new Set(names)].sort();
   }
 
+  // Each sticker's own image on the site, by sticker id. The editor draws
+  // stickers from sprite sheets; the picker shows each one's WebP. Only some
+  // packs are exported as such, so the full list is read from the source of
+  // the module that defines them (`{id:`...`,name:...,webp:V}` with
+  // `V=`/whiteboards/assets/....webp``), and checked against the exports.
+  async function stickerImages() {
+    const out = {};
+    const isPack = (v) => v && typeof v === 'object' && Array.isArray(v.stickers)
+      && v.stickers.some((s) => s && typeof s.id === 'string' && typeof s.webp === 'string');
+    const take = (v) => {
+      if (isPack(v)) v.stickers.forEach((s) => { if (s && typeof s.webp === 'string') out[s.id] = s.webp; });
+      else if (Array.isArray(v)) v.forEach(take);
+    };
+    for (const url of moduleUrls()) {
+      let mod;
+      try { mod = await import(url); } catch (_e) { continue; }
+      for (const key of Object.keys(mod)) {
+        try { take(mod[key]); } catch (_e) { /* an export not yet initialised */ }
+      }
+      let text;
+      try { text = await (await fetch(url)).text(); } catch (_e) { continue; }
+      if (!text.includes('spritesheetId:')) continue;
+      const paths = {};
+      for (const m of text.matchAll(/([A-Za-z0-9_$]+)=`(\/whiteboards\/assets\/[^`]+\.webp)`/g)) paths[m[1]] = m[2];
+      for (const m of text.matchAll(/\{id:`([^`]+)`,name:[^,{}]+,webp:([A-Za-z0-9_$]+)[,}]/g)) {
+        if (paths[m[2]] && !(m[1] in out)) out[m[1]] = paths[m[2]];
+      }
+    }
+    return out;
+  }
+
+  // Files on the site, as base64, by the key they were asked for under.
+  async function download(paths) {
+    const out = {};
+    for (const [key, path] of Object.entries(paths)) {
+      try {
+        const res = await fetch(new URL(path, location.href).href);
+        if (!res.ok) continue;
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+        out[key] = btoa(binary);
+      } catch (_e) { /* left as a placeholder */ }
+    }
+    return out;
+  }
+
   // How many icons each collection has, and how many of them name an SVG file.
   async function libraryCatalogue(collections) {
     const out = {};
@@ -183,5 +232,7 @@
     return out;
   }
 
-  globalThis.__whiteboardExporterGraphics = { shapeDrawings, libraryIcons, libraryCatalogue, libraryCollections };
+  globalThis.__whiteboardExporterGraphics = {
+    shapeDrawings, libraryIcons, libraryCatalogue, libraryCollections, stickerImages, download,
+  };
 })();

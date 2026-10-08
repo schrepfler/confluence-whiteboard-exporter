@@ -112,6 +112,12 @@ def sticky(x: float, y: float, words: str | None = None, w: float = 144, h: floa
     }
 
 
+def sticker(x: float, y: float, sprite: str, size: float = 85, rotation: float = 0.0) -> Json:
+    """A sticker from one of the editor's packs (85 square by default)."""
+    return {"type": "sticker", "source": 1, "position": v2(x, y), "size": v2(size, size), "spriteId": sprite,
+            "rotation": rotation}
+
+
 def section(x: float, y: float, w: float, h: float, title: str, **opts: Any) -> Json:
     return {"type": "section", "source": 1, "position": v2(x, y), "size": v2(w, h),
             "color": v3(opts.pop("color", SECTION)), "rotation": 0.0, "title": title, "titleWidth": 140,
@@ -314,6 +320,13 @@ def spec() -> list[Cell]:
     add("section/with elements", section(0, 30, 380, 260, "Contents"), sticky(-90, 30, "On it"),
         shape(1, 100, 30, 120, 80, "Shape"))
     add("section/pasted last", sticky(-60, 30, "Under?"), section(0, 30, 320, 240, "Pasted last"))
+
+    # Stickers, from several packs (their images are read per board).
+    for sprite in ("AWS-Lambda", "ai_platform", "AtlassianStickers-blank-page", "facilitators-thumbs-up",
+                   "Race-Car", "Squiggle-1", "open-goodjob"):
+        add(f"sticker/{sprite}", sticker(0, 20, sprite))
+    add("sticker/large", sticker(0, 20, "facilitators-thumbs-up", size=300))
+    add("sticker/turned", sticker(0, 20, "Race-Car", size=160, rotation=0.6))
     return cells
 
 
@@ -362,6 +375,16 @@ def cell_slug(name: str) -> str:
     return re.sub(r"[^a-z0-9.]+", "-", name.lower()).strip("-")
 
 
+def shows_artwork(cell: Cell) -> bool:
+    """Whether the editor draws artwork in the cell that is not ours to
+    publish (icon shapes, library icons, stickers): its reference image is
+    kept outside the repo."""
+    from .shapes import is_icon
+
+    return any((e["type"] == "shape" and is_icon(e["shape"])) or e["type"] in ("advanced-icon", "sticker")
+               for e in cell.elements)
+
+
 def placements(cells: list[Cell]) -> list[tuple[str, int | str]]:
     """For each payload element, its cell and its place in it: the index in
     the cell's elements, or "caption"."""
@@ -399,7 +422,7 @@ def match_board(cells: list[Cell], board: dict[str, Json], centres: dict[str, tu
         return abs(cx - x - offset[0]) < 0.05 and abs(cy - y - offset[1]) < 0.05
 
     for i, e in enumerate(elements):
-        if e["type"] in ("shape", "text", "advanced-icon", "sticky", "section"):
+        if e["type"] in ("shape", "text", "advanced-icon", "sticky", "section", "sticker"):
             hits = [eid for eid in by_type.get(e["type"], []) if near(eid, e["position"]["x"], e["position"]["y"])]
             if len(hits) == 1:
                 found[i] = hits[0]

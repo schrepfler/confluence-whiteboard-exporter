@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .compare import editor_points, hausdorff
-from .reference import Cell, Json, cell_slug, match_board, payload, spec_hash
+from .reference import Cell, Json, cell_slug, match_board, payload, shows_artwork, spec_hash
 
 # How far the editor's drawing may move before it counts as drift. Boards
 # built at different paste offsets agree to within 0.05 units (the offset
@@ -132,8 +132,9 @@ async def _read_packs(frame) -> dict[str, Json | None] | None:  # noqa: ANN001 -
 
 
 async def _cache_artwork(frame, cells: list[Cell]) -> None:  # noqa: ANN001 - a Playwright frame
-    """Keep every icon shape's drawing and the spec's library icons, as
-    the editor has them, for the report (outside the repo)."""
+    """Keep every icon shape's drawing and the spec's library icons and
+    stickers (base64), as the editor has them, for the report (outside the
+    repo)."""
     from .drawings import kind_entry
     from .extract import GRAPHICS_PROBE
     from .shapes import KIND_NAMES, is_icon
@@ -145,26 +146,41 @@ async def _cache_artwork(frame, cells: list[Cell]) -> None:  # noqa: ANN001 - a 
     kinds = await frame.evaluate("(k) => globalThis.__whiteboardExporterGraphics.shapeDrawings(k)",
                                  [k for k in KIND_NAMES if is_icon(k)])
     svgs = await frame.evaluate("(i) => globalThis.__whiteboardExporterGraphics.libraryIcons(i)", icons)
+    sprites = {e["spriteId"] for c in cells for e in c.elements if e["type"] == "sticker"}
+    paths = await frame.evaluate("() => globalThis.__whiteboardExporterGraphics.stickerImages()")
+    stickers = await frame.evaluate("(p) => globalThis.__whiteboardExporterGraphics.download(p)",
+                                    {s: paths[s] for s in sorted(sprites) if s in paths})
     atomic_write_text(artwork_cache_path(), json.dumps(
-        {"drawings": {k: kind_entry(rec) for k, rec in kinds.items()}, "icons": svgs}))
+        {"drawings": {k: kind_entry(rec) for k, rec in kinds.items()}, "icons": svgs, "stickers": stickers}))
 
 
-def write(snapshot: Snapshot, directory: Path, keep: frozenset[str] = frozenset()) -> None:
-    """Save as references: geometry.json and images/<cell>.png. Cells in
-    `keep` keep the image already there, if any; images of cells not in
-    the snapshot go."""
+def image_path(directory: Path, cell: Cell, artwork_dir: Path | None = None) -> Path:
+    """Where a cell's reference image is kept: with the references, or, for
+    a cell that shows the editor's artwork, outside the repo."""
+    from .storage import artwork_images_dir
+
+    folder = (artwork_dir or artwork_images_dir()) if shows_artwork(cell) else directory / "images"
+    return folder / f"{cell_slug(cell.name)}.png"
+
+
+def write(snapshot: Snapshot, directory: Path, cells: list[Cell], keep: frozenset[str] = frozenset(),
+          artwork_dir: Path | None = None) -> None:
+    """Save as references: geometry.json and each cell's image (see
+    image_path). Cells in `keep` keep the image already there, if any;
+    images of cells not in the snapshot go."""
     from .storage import atomic_write_text
 
     atomic_write_text(directory / "geometry.json", json.dumps(snapshot.geometry, indent=1) + "\n")
+    targets = {c.name: image_path(directory, c, artwork_dir) for c in cells if c.name in snapshot.images}
     image_dir = directory / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
-    files = {f"{cell_slug(name)}.png": (name, png) for name, png in snapshot.images.items()}
     for old in image_dir.glob("*.png"):
-        if old.name not in files:
+        if old not in targets.values():
             old.unlink()
-    for file, (name, png) in files.items():
-        if name not in keep or not (image_dir / file).exists():
-            (image_dir / file).write_bytes(png)
+    for name, target in targets.items():
+        if name not in keep or not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(snapshot.images[name])
 
 
 def refresh(directory: Path, cells: list[Cell], live: Snapshot) -> dict[str, list[str]] | None:
@@ -175,19 +191,20 @@ def refresh(directory: Path, cells: list[Cell], live: Snapshot) -> dict[str, lis
     noise does not rewrite it."""
     before = load(directory, cells) if (directory / "geometry.json").exists() else None
     if before is None:
-        write(live, directory)
+        write(live, directory, cells)
         return None
     known = [c.name for c in cells if c.name in before.geometry["cells"]]
     changed = drift(before, live, known)
     changed |= {c.name: ["new"] for c in cells if c.name not in before.geometry["cells"]}
-    write(live, directory, keep=frozenset(n for n in known if n not in changed))
+    write(live, directory, cells, keep=frozenset(n for n in known if n not in changed))
     return changed
 
 
-def load(directory: Path, cells: list[Cell]) -> Snapshot:
-    """The references saved in `directory`."""
+def load(directory: Path, cells: list[Cell], artwork_dir: Path | None = None) -> Snapshot:
+    """The references saved in `directory`, with the images of artwork
+    cells from outside the repo where this machine has them."""
     geometry = json.loads((directory / "geometry.json").read_text())
-    images = {c.name: p.read_bytes() for c in cells if (p := directory / "images" / f"{cell_slug(c.name)}.png").exists()}
+    images = {c.name: p.read_bytes() for c in cells if (p := image_path(directory, c, artwork_dir)).exists()}
     return Snapshot(geometry, images)
 
 
@@ -221,12 +238,11 @@ def drift(reference: Snapshot, live: Snapshot, names: list[str]) -> dict[str, li
                 moved = hausdorff(editor_points(a["path"]), editor_points(b["path"]))
                 if moved > DRIFT_PATH:
                     found.append(f"{what} path moved by {moved:.1f}")
+        # Images only where both have one: a clone has no images of artwork cells.
         if (png_a := reference.images.get(name)) and (png_b := live.images.get(name)):
             score, _ = pixel_difference(Image.open(io.BytesIO(png_a)), Image.open(io.BytesIO(png_b)))
             if score > DRIFT_PIXELS:
                 found.append(f"image: {score:.0%} of drawn pixels differ")
-        elif png_a or png_b:
-            found.append("image: only one of the two has one")
         if found:
             out[name] = found
     return out

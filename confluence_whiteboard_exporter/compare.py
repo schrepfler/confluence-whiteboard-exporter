@@ -58,7 +58,8 @@ def compare(cells: list[Cell], golden: Json) -> list[CellResult]:
         {"board": {"boardId": "reference", "title": "reference", "spaceKey": "REF"},
          "strategy": "clipboard", "elements": clip}), report=False)
     svg, _ = svg_document(board)  # for its geometry: no warnings about how icons look
-    boxes = {m["id"]: tuple(float(m[k]) for k in ("x", "y", "w", "h")) for m in _node_boxes(svg)}
+    boxes = {m["id"]: _bounds(*(float(m[k]) for k in ("x", "y", "w", "h")), float(m.get("r", 0)))
+             for m in _node_boxes(svg)}
     boxes |= _label_boxes(svg)
     paths = dict(re.findall(r'<path class="wb-edge" data-id="([^"]+)"[^>]*?\sd="([^"]+)"', svg))
     by_place = {(name, place): i for i, (name, place) in enumerate(placements(cells))}
@@ -84,6 +85,16 @@ def compare(cells: list[Cell], golden: Json) -> list[CellResult]:
                                                {"box": [x, y, x + w, y + h]}, {"box": entry["box"]}))
         results.append(result)
     return results
+
+
+def _bounds(x: float, y: float, w: float, h: float, turn: float) -> tuple[float, float, float, float]:
+    """The box the editor reports for a box turned about its centre: the
+    upright box round it."""
+    if not turn:
+        return x, y, w, h
+    bw = w * abs(math.cos(turn)) + h * abs(math.sin(turn))
+    bh = w * abs(math.sin(turn)) + h * abs(math.cos(turn))
+    return x + (w - bw) / 2, y + (h - bh) / 2, bw, bh
 
 
 def _label_boxes(svg: str) -> dict[str, tuple[float, float, float, float]]:

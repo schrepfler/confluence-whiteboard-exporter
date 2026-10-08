@@ -1,5 +1,6 @@
-"""Icon artwork read from the editor per board (drawings.py, the extractor's
-read_artwork) and drawn by the renderers; the repo carries none of it."""
+"""Icon and sticker artwork read from the editor per board (drawings.py, the
+extractor's read_artwork) and drawn by the renderers; the repo carries none
+of it."""
 
 from __future__ import annotations
 
@@ -7,6 +8,8 @@ import asyncio
 import logging
 import re
 from pathlib import Path
+
+import pytest
 
 from confluence_whiteboard_exporter.board import from_dump
 from confluence_whiteboard_exporter.canvas import render_canvas
@@ -89,6 +92,10 @@ class _Frame:
             return {str(k): KEY for k in arg}
         if "libraryIcons" in script:
             return {f"{i['collection']}/{i['category']}/{i['iconId']}": "<svg/>" for i in arg}
+        if "stickerImages" in script:
+            return {"AWS-Lambda": "/whiteboards/assets/AWS-Lambda.abc.webp"}
+        if "download" in script:
+            return {k: "UklGRg==" for k in arg}  # "RIFF"
         return None
 
 
@@ -96,7 +103,7 @@ def test_the_extractor_reads_only_the_artwork_a_board_uses(tmp_path: Path) -> No
     elements = [ClipboardElement.model_validate(e) for e in (
         {"type": "shape", "shape": 33}, {"type": "shape", "shape": 1}, S3)]
     frame = _Frame()
-    drawings, icons = asyncio.run(read_artwork(frame, elements, None, tmp_path / "media"))
+    drawings, icons, _ = asyncio.run(read_artwork(frame, elements, None, tmp_path / "media"))
     assert frame.asked[0] == [33], "the icon kind only, not the rectangle"
     assert list(drawings) == ["33"] and drawings["33"]["key"] == "key"
     href = icons["aws/storage/Amazon-Simple-Storage-Service"]
@@ -105,8 +112,8 @@ def test_the_extractor_reads_only_the_artwork_a_board_uses(tmp_path: Path) -> No
 
 def test_without_media_library_icons_are_not_read(tmp_path: Path) -> None:
     frame = _Frame()
-    drawings, icons = asyncio.run(read_artwork(frame, [ClipboardElement.model_validate(S3)], None, None))
-    assert (drawings, icons, frame.asked) == ({}, {}, [])
+    art = asyncio.run(read_artwork(frame, [ClipboardElement.model_validate(S3)], None, None))
+    assert (art, frame.asked) == (({}, {}, {}), [])
 
 
 # A shape kind newer than shape_data.json, as the editor's registry hands it over.
@@ -136,3 +143,53 @@ def test_the_extractor_also_reads_shape_kinds_the_repo_does_not_know(tmp_path: P
     elements = [ClipboardElement.model_validate({"type": "shape", "shape": NEW_KIND})]
     asyncio.run(read_artwork(frame, elements, None, tmp_path / "media"))
     assert frame.asked[0] == [NEW_KIND]
+
+
+# ------------------------------------------------------------------ stickers
+
+LAMBDA = {"type": "sticker", "position": {"x": 0, "y": 0}, "size": {"x": 120, "y": 120},
+          "spriteId": "AWS-Lambda", "rotation": 0.3}
+
+
+def test_a_sticker_is_its_image_turned_about_its_centre() -> None:
+    board = _board(LAMBDA, stickers={"AWS-Lambda": "media/sticker-AWS-Lambda.webp"})
+    (node,) = board.nodes
+    assert (node.sprite, node.rotation, node.x, node.w) == ("AWS-Lambda", 0.3, -60, 120)
+    svg = render_svg(board)
+    assert re.search(r'<image x="-60" y="-60" width="120" height="120" href="media/sticker-AWS-Lambda.webp" '
+                     r'preserveAspectRatio="xMidYMid meet" transform="rotate\(17.2 0 0\)"/>', svg)
+    (card,) = render_canvas(board).nodes
+    assert (card.type, card.file) == ("file", "media/sticker-AWS-Lambda.webp")
+
+
+def test_a_sticker_without_its_image_is_a_reported_placeholder(caplog) -> None:
+    caplog.set_level(logging.WARNING)
+    svg = render_svg(_board(LAMBDA))
+    assert "<image" not in svg and ">AWS-Lambda<" in svg
+    assert any("1 sticker(s) drawn as placeholders" in r.getMessage() for r in caplog.records)
+
+
+def test_fiber_dump_reads_stickers() -> None:
+    fiber = {"board": {"K": {"t": "sticker", "si": "ai_platform"}},
+             "dimensions": [{"key": "p#K", "val": [10, 20]}, {"key": "s#K", "val": [120, 120]},
+                            {"key": "r#K", "val": 0.3}], "zindex": ["K"]}
+    board = from_dump(DumpFile.model_validate({"board": {"boardId": "1", "title": "t", "spaceKey": "S"},
+                                               "strategy": "fiber", "fiber_dump": fiber}))
+    (node,) = board.nodes
+    assert (node.sprite, node.rotation, node.x, node.y, node.w) == ("ai_platform", 0.3, -50, -40, 120)
+
+
+def test_the_extractor_saves_a_boards_sticker_images(tmp_path: Path) -> None:
+    frame = _Frame()
+    _, _, stickers = asyncio.run(read_artwork(frame, [ClipboardElement.model_validate(LAMBDA)], None,
+                                              tmp_path / "media"))
+    assert stickers == {"AWS-Lambda": "media/sticker-AWS-Lambda.webp"}
+    assert (tmp_path / "media" / "sticker-AWS-Lambda.webp").read_bytes() == b"RIFF"
+
+
+def test_a_turned_box_compares_by_the_upright_box_round_it() -> None:
+    from confluence_whiteboard_exporter.compare import _bounds
+
+    # As the editor reported it for a 160 square turned 0.6.
+    assert _bounds(0, 0, 160, 160, 0.6) == pytest.approx((-31.2, -31.2, 222.4, 222.4), abs=0.1)
+    assert _bounds(0, 0, 160, 100, 0.0) == (0, 0, 160, 100)
