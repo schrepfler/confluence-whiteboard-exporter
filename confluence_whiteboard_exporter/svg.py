@@ -264,6 +264,8 @@ def _render_node(node: Node, box: Box, smap: dict[int, int], board: Board) -> st
         inner = _section_frame(node, box)
     elif node.kind is Kind.STICKER:
         inner = _sticker_image(node, box, board.stickers)
+    elif node.kind is Kind.STAMP:
+        inner = _sticker_image(node, box, board.stamps)
     elif node.kind is Kind.LINE and len(node.points) == 2:
         (x1, y1), (x2, y2) = node.points
         width = thickness(int(node.stroke_width))
@@ -282,6 +284,8 @@ def _render_node(node: Node, box: Box, smap: dict[int, int], board: Board) -> st
         kind = f' data-kind="{resolve(node.shape_kind, smap)}"'
     if node.rotation:
         kind += f' data-r="{_fraction(node.rotation)}"'
+    if node.parent:  # the viewer moves it with the element it was put on
+        kind += f' data-parent="{_xml_escape(node.parent)}"'
     return (
         f'<g class="{cls}" data-id="{_xml_escape(node.id)}"{kind} '
         f'data-x="{fmt(x)}" data-y="{fmt(y)}" data-w="{fmt(w)}" data-h="{fmt(h)}">'
@@ -365,8 +369,8 @@ def _sticky(node: Node, box: Box) -> str:
 
 
 def _sticker_image(node: Node, box: Box, stickers: dict[str, str]) -> str:
-    """A sticker: its picture (the image read for the board), turned as on
-    the board; without it, a tile naming the sticker."""
+    """A sticker or stamp: its picture (the image read for the board),
+    turned as on the board; without it, a tile naming it."""
     x, y, w, h = box
     if w <= 0 or h <= 0:
         return ""

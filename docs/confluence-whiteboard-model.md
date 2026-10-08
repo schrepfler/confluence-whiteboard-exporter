@@ -180,7 +180,7 @@ Each element type declares which box it uses
 | `smartLink` | YSmartLink | Link card (unfurled URL) | ❌ |
 | `smartConnector` | YSmartConnector | Jira issue relationship line | ❌ |
 | `sticker` | YSticker | Sticker from one of the editor's packs (`spriteId`) | ✅ (its image, read per board) |
-| `stamp` | YStamp | Stamp / reaction (`spriteId`) | ❌ |
+| `stamp` | YStamp | Stamp / reaction (`spriteId`), often put on another element | ✅ (its image, read per board) |
 | `icon` | YIcon | Icon from an icon collection | ❌ |
 | `drawing` | YDrawing | Pen drawing | ❌ |
 | `composite-shape` | YCompositeShape | Multi-part shape (UML class, …) | ❌ |
@@ -393,6 +393,21 @@ from the source of the module that defines them; it saves the image of each
 sticker a board uses in its `media/`. The SVG and HTML draw it turned about
 its centre; JSON Canvas points a file node at it. The editor reports a
 turned sticker's bounds as the upright box round it.
+
+**Stamps** (`stamp`) store the same as stickers (60 square by default) and,
+when put on an element, `attachedTo`: `parentIndex` (its place in the
+clipboard payload) and `offset`, the stamp's centre less the element's
+top-left corner; in Yjs, `at: {parentId, offset}`, and `p` is still the
+absolute centre. The picker offers 45 stamps (thumbs up, fire, 100, ...),
+shown as symbols (`stamp-<id>`) in the editor's icon sprite
+(`/whiteboards/assets/icons.<hash>.svg`). The canvas draws them from a
+texture atlas instead (`stamps.<hash>.webp`, 2048 square), which adds a
+white outline and a shadow: its frame map (`stamps.data.<hash>.br`,
+MessagePack served Brotli-compressed) gives each stamp as `[u0, u1, v0,
+v1]`, texel centres with v up from the bottom, a 256-pixel square spread
+over the stamp's whole box. The extractor saves each stamp a board uses as
+that square, a PNG in its `media/`, or as its bare symbol if the atlas
+cannot be read. The HTML viewer moves a stamp with the element it is on.
 
 **Library icons** (`advanced-icon`) come from four collections: `atlassian`
 (26 icons in 6 categories), `aws` (814 in 27), `azure` (682 in 29) and

@@ -82,6 +82,7 @@ def test_refreshing_rewrites_only_what_drifted(tmp_path: Path) -> None:
     assert refresh(tmp_path, cells, first) is None, "nothing to compare with the first time"
 
     again = copy.deepcopy(first)
+    again.geometry["cells"]["cell/a"][0]["box"][0] += 0.04  # pasted at another sub-unit offset
     noisy = Image.open(io.BytesIO(_png(20)))
     noisy.putpixel((50, 20), (42, 42, 46))  # a colour level off: capture noise
     buffer = io.BytesIO()
@@ -91,6 +92,7 @@ def test_refreshing_rewrites_only_what_drifted(tmp_path: Path) -> None:
     changed = refresh(tmp_path, cells, again)
     assert list(changed) == ["cell/b"]
     assert (tmp_path / "images" / "cell-a.png").read_bytes() == first.images["cell/a"], "noise is not written"
+    assert load(tmp_path, cells).geometry["cells"]["cell/a"] == first.geometry["cells"]["cell/a"]
     assert (tmp_path / "images" / "cell-b.png").read_bytes() == again.images["cell/b"]
 
 

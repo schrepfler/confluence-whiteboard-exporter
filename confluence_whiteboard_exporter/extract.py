@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 from contextlib import AsyncExitStack
+from dataclasses import dataclass, field
 import re
 import shutil
 import subprocess
@@ -224,8 +225,7 @@ class Extractor:
             )
             await _wait_for_doc_populated(frame, timeout_ms=10_000)
             strategy, elements, fiber_dump = await self._capture(page, frame)
-            drawings, icons, stickers = await read_artwork(frame, elements, fiber_dump,
-                                                           target_media if self.download_media else None)
+            art = await read_artwork(frame, elements, fiber_dump, target_media if self.download_media else None)
             images = _image_files(elements, fiber_dump)
             wanted = set(images)
             if self.download_media:
@@ -252,9 +252,10 @@ class Extractor:
             elements=elements,
             fiber_dump=fiber_dump,
             media=media_map,
-            drawings=drawings,
-            icons=icons,
-            stickers=stickers,
+            drawings=art.drawings,
+            icons=art.icons,
+            stickers=art.stickers,
+            stamps=art.stamps,
         )
         atomic_write_text(target_dump, json.dumps(dump.model_dump(exclude_none=True), indent=2))
         return dump
@@ -434,14 +435,24 @@ async def _capture_media(
     kinds[uuid] = kind
 
 
+@dataclass
+class Artwork:
+    """What a board's shapes, icons, stickers and stamps are drawn with
+    that the repo does not carry, as the dump keeps it."""
+
+    drawings: dict[str, dict] = field(default_factory=dict)  # shape definitions, by kind
+    icons: dict[str, str] = field(default_factory=dict)  # library icons' SVG files, by icon key
+    stickers: dict[str, str] = field(default_factory=dict)  # stickers' images, by sticker id
+    stamps: dict[str, str] = field(default_factory=dict)  # stamps' images, by stamp id
+
+
 async def read_artwork(frame: Frame, elements: list[ClipboardElement], fiber_dump: FiberDump | None,
-                       target_media: Path | None) -> tuple[dict[str, dict], dict[str, str], dict[str, str]]:
-    """What the board's shapes, icons and stickers are drawn with that the
-    repo does not carry, read from the editor: the definitions of its icon
-    shapes and of any shape kind newer than shape_data.json, by kind; and,
-    saved in `target_media` (none without it), its library icons' SVG files
-    by icon key and its stickers' images by sticker id. What cannot be read
-    is left out, and drawn as a placeholder."""
+                       target_media: Path | None) -> Artwork:
+    """The board's artwork, read from the editor: the definitions of its
+    icon shapes and of any shape kind newer than shape_data.json; and, saved
+    in `target_media` (none without it), its library icons', stickers' and
+    stamps' images. What cannot be read is left out, and drawn as a
+    placeholder."""
     def wanted_kind(kind: object) -> bool:
         return isinstance(kind, int) and (is_icon(kind) or not known(kind))
 
@@ -451,20 +462,23 @@ async def read_artwork(frame: Frame, elements: list[ClipboardElement], fiber_dum
                   if isinstance(v, dict) and v.get("t") == "shape" and wanted_kind(v.get("sh"))}
     wanted = {(e.collection, e.category, e.iconId) for e in elements
               if e.type == "advanced-icon" and e.collection and e.category and e.iconId}
-    sprites = {e.spriteId for e in elements if e.type == "sticker" and e.spriteId}
-    if fiber_dump is not None:
-        sprites |= {v["si"] for v in fiber_dump.board.values()
-                    if isinstance(v, dict) and v.get("t") == "sticker" and isinstance(v.get("si"), str)}
-    drawings: dict[str, dict] = {}
-    icons: dict[str, str] = {}
-    stickers: dict[str, str] = {}
-    if not kinds and not ((wanted or sprites) and target_media):
-        return drawings, icons, stickers
+    def sprite_ids(kind: str) -> set[str]:
+        ids = {e.spriteId for e in elements if e.type == kind and e.spriteId}
+        if fiber_dump is not None:
+            ids |= {v["si"] for v in fiber_dump.board.values()
+                    if isinstance(v, dict) and v.get("t") == kind and isinstance(v.get("si"), str)}
+        return ids
+
+    sprites, stamp_ids = sprite_ids("sticker"), sprite_ids("stamp")
+    art = Artwork()
+    drawings, icons, stickers, stamps = art.drawings, art.icons, art.stickers, art.stamps
+    if not kinds and not ((wanted or sprites or stamp_ids) and target_media):
+        return art
     try:
         await frame.evaluate(GRAPHICS_PROBE)
         if kinds:
             read = await frame.evaluate("(k) => globalThis.__whiteboardExporterGraphics.shapeDrawings(k)", sorted(kinds))
-            drawings = {str(k): kind_entry(rec) for k, rec in read.items()}
+            drawings.update({str(k): kind_entry(rec) for k, rec in read.items()})
         if wanted and target_media:
             svgs = await frame.evaluate(
                 "(i) => globalThis.__whiteboardExporterGraphics.libraryIcons(i)",
@@ -483,9 +497,19 @@ async def read_artwork(frame: Frame, elements: list[ClipboardElement], fiber_dum
                 name = "sticker-" + re.sub(r"[^A-Za-z0-9._-]+", "-", sprite) + (Path(paths[sprite]).suffix or ".webp")
                 (target_media / name).write_bytes(base64.b64decode(data))
                 stickers[sprite] = f"media/{name}"
+        if stamp_ids and target_media:
+            images = await frame.evaluate("(i) => globalThis.__whiteboardExporterGraphics.stampImages(i)",
+                                          sorted(stamp_ids))
+            ensure_dir(target_media)
+            for stamp, url in images.items():
+                if not (m := re.fullmatch(r"data:image/(png|svg)\+?[a-z]*;base64,(.*)", url, re.S)):
+                    continue
+                name = "stamp-" + re.sub(r"[^A-Za-z0-9._-]+", "-", stamp) + "." + m[1]
+                (target_media / name).write_bytes(base64.b64decode(m[2]))
+                stamps[stamp] = f"media/{name}"
     except PlaywrightError as e:
-        log.warning("icon and sticker artwork could not be read (%s); they are drawn as placeholders", e)
-    return drawings, icons, stickers
+        log.warning("icon, sticker and stamp artwork could not be read (%s); they are drawn as placeholders", e)
+    return art
 
 
 def _image_files(elements: list[ClipboardElement], fiber_dump: FiberDump | None) -> dict[str, str]:

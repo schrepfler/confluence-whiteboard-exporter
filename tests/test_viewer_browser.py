@@ -231,3 +231,31 @@ def test_a_label_rides_along_when_its_connector_moves(browser, tmp_path: Path) -
     after = label.bounding_box()
     assert after["y"] > before["y"] + 20, "the label follows its connector down"
     assert errors == []
+
+
+def test_a_stamp_moves_with_the_element_it_was_put_on(browser, tmp_path: Path) -> None:
+    from confluence_whiteboard_exporter.board import from_dump
+    from confluence_whiteboard_exporter.model import ClipboardElement, DumpFile
+
+    sticky = {"type": "sticky", "position": {"x": 0, "y": 0}, "size": {"x": 144, "y": 144}}
+    stamp = {"type": "stamp", "position": {"x": 29, "y": -31}, "size": {"x": 60, "y": 60}, "spriteId": "fire",
+             "attachedTo": {"parentIndex": 0, "offset": [101, 41]}}
+    loose = {**stamp, "position": {"x": 300, "y": 0}, "attachedTo": None}
+    board = from_dump(DumpFile.model_validate({
+        "board": {"boardId": "1", "title": "t", "spaceKey": "S"}, "strategy": "clipboard",
+        "elements": [ClipboardElement.model_validate(e) for e in (sticky, stamp, loose)]}), report=False)
+    page, errors = _open(browser, tmp_path, render_html(board))
+    sticky_id, on_id, loose_id = (n.id for n in board.nodes)
+    on, off = page.locator(f'g.wb-node[data-id="{on_id}"]'), page.locator(f'g.wb-node[data-id="{loose_id}"]')
+    before, loose_before = on.bounding_box(), off.bounding_box()
+
+    box = page.locator(f'g.wb-node[data-id="{sticky_id}"]').bounding_box()
+    page.mouse.move(box["x"] + 20, box["y"] + box["height"] - 20)  # away from the stamp
+    page.mouse.down()
+    page.mouse.move(box["x"] + 100, box["y"] + box["height"] + 20, steps=5)
+    page.mouse.up()
+
+    after = on.bounding_box()
+    assert (after["x"], after["y"]) == pytest.approx((before["x"] + 80, before["y"] + 40), abs=2)
+    assert off.bounding_box() == loose_before, "a stamp on nothing stays put"
+    assert errors == []

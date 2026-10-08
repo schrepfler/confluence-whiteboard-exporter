@@ -118,6 +118,21 @@ def sticker(x: float, y: float, sprite: str, size: float = 85, rotation: float =
             "rotation": rotation}
 
 
+def stamp(x: float, y: float, sprite: str, size: float = 60, rotation: float = 0.0,
+          on: tuple[int, Json] | None = None) -> Json:
+    """A stamp (60 square by default), optionally put `on` an element: its
+    index in the cell, and that element's top-left corner, which the stamp's
+    centre is kept relative to."""
+    out = {"type": "stamp", "source": 1, "position": v2(x, y), "size": v2(size, size), "rotation": rotation,
+           "spriteId": sprite}
+    if on is not None:
+        index, parent = on
+        left = parent["position"]["x"] - parent["size"]["x"] / 2
+        top = parent["position"]["y"] - parent["size"]["y"] / 2
+        out["attachedTo"] = {"parentIndex": index, "offset": [x - left, y - top]}
+    return out
+
+
 def section(x: float, y: float, w: float, h: float, title: str, **opts: Any) -> Json:
     return {"type": "section", "source": 1, "position": v2(x, y), "size": v2(w, h),
             "color": v3(opts.pop("color", SECTION)), "rotation": 0.0, "title": title, "titleWidth": 140,
@@ -327,6 +342,16 @@ def spec() -> list[Cell]:
         add(f"sticker/{sprite}", sticker(0, 20, sprite))
     add("sticker/large", sticker(0, 20, "facilitators-thumbs-up", size=300))
     add("sticker/turned", sticker(0, 20, "Race-Car", size=160, rotation=0.6))
+
+    # Stamps, on their own or put on an element (their SVGs are read per board).
+    for sprite in ("thumbs-up", "fire", "100", "heart-eyes", "idea", "warning"):
+        add(f"stamp/{sprite}", stamp(0, 20, sprite))
+    add("stamp/large", stamp(0, 20, "gold-star", size=160))
+    add("stamp/turned", stamp(0, 20, "rocket", size=100, rotation=0.5))
+    note = sticky(0, 30, "Stamped")
+    add("stamp/on a sticky", note, stamp(60, -30, "thumbs-up", on=(0, note)))
+    box = shape(1, 0, 30, 200, 100, "Approved")
+    add("stamp/on a shape", box, stamp(90, -10, "success", on=(0, box)), stamp(-90, 70, "plus-one", on=(0, box)))
     return cells
 
 
@@ -358,6 +383,8 @@ def _placed(e: Json, dx: float, dy: float, base: int) -> Json:
     for key in ("sourceIndex", "targetIndex", "sourcePathIndex"):
         if key in e and e[key] >= 0:
             e[key] += base
+    if e.get("attachedTo"):
+        e["attachedTo"]["parentIndex"] += base
     for key in ("sourceElement", "targetElement", "sourcePathId"):
         if e.get(key):
             e[key] = f"ref-{int(e[key].split('-')[1]) + base}"
@@ -377,11 +404,11 @@ def cell_slug(name: str) -> str:
 
 def shows_artwork(cell: Cell) -> bool:
     """Whether the editor draws artwork in the cell that is not ours to
-    publish (icon shapes, library icons, stickers): its reference image is
-    kept outside the repo."""
+    publish (icon shapes, library icons, stickers, stamps): its reference
+    image is kept outside the repo."""
     from .shapes import is_icon
 
-    return any((e["type"] == "shape" and is_icon(e["shape"])) or e["type"] in ("advanced-icon", "sticker")
+    return any((e["type"] == "shape" and is_icon(e["shape"])) or e["type"] in ("advanced-icon", "sticker", "stamp")
                for e in cell.elements)
 
 
@@ -422,7 +449,7 @@ def match_board(cells: list[Cell], board: dict[str, Json], centres: dict[str, tu
         return abs(cx - x - offset[0]) < 0.05 and abs(cy - y - offset[1]) < 0.05
 
     for i, e in enumerate(elements):
-        if e["type"] in ("shape", "text", "advanced-icon", "sticky", "section", "sticker"):
+        if e["type"] in ("shape", "text", "advanced-icon", "sticky", "section", "sticker", "stamp"):
             hits = [eid for eid in by_type.get(e["type"], []) if near(eid, e["position"]["x"], e["position"]["y"])]
             if len(hits) == 1:
                 found[i] = hits[0]

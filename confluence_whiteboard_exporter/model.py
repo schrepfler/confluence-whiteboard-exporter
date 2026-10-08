@@ -69,8 +69,10 @@ class ClipboardElement(BaseModel):
     # Sections: a titled frame.
     title: str | None = None
     hasDropShadow: bool | None = None
-    # Stickers: which sticker (its image is read per board).
+    # Stickers and stamps: which one (its image is read per board); a stamp
+    # put on an element names it (`parentIndex`, or `parentId` in Yjs).
     spriteId: str | None = None
+    attachedTo: dict[str, Any] | None = None
 
     sourceElement: str | None = None
     sourceAnchor: Anchor | None = None
@@ -133,3 +135,4 @@ class DumpFile(BaseModel):
     drawings: dict[str, dict[str, Any]] = Field(default_factory=dict)
     icons: dict[str, str] = Field(default_factory=dict)
     stickers: dict[str, str] = Field(default_factory=dict)  # each sticker's image, by sticker id
+    stamps: dict[str, str] = Field(default_factory=dict)  # each stamp's image, by stamp id

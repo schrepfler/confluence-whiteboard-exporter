@@ -35,7 +35,7 @@ Checked board by board, side by side with the live editor:
   placeholders, with a warning.
 - **The font** is Atlassian Sans only where it is installed; elsewhere a
   system font stands in, so line breaks can differ slightly.
-- **Unsupported element types** (stamps, tables, mind maps, cards, Jira
+- **Unsupported element types** (tables, mind maps, cards, Jira
   issues, …) are left out with a warning. Supporting one needs a sample
   board containing it, which a scratch board in a personal space can
   provide.
@@ -324,10 +324,22 @@ module's source, which it reads) and saves the ones a board uses in its
 match the editor's geometry and drawing: 254 cells, 253 pass and 1 warn
 (list bullets) in the report. One rule: the editor reports a turned
 sticker's bounds as the upright box round it, which the comparison now
-does too. Stamps (`stamp`) have the same form and are next.
+does too.
+
+## Stamps
+
+Stamps (`stamp`) have the stickers' form, plus `attachedTo`: the element a
+stamp was put on, which it moves with. The picker shows each stamp as a
+symbol in the editor's icon sprite, but the canvas draws it from a texture
+atlas with a white outline and a shadow, so the extractor cuts each stamp a
+board uses out of that atlas, as a PNG in its `media/` (the bare symbol
+stands in if the atlas cannot be read). The HTML viewer moves a stamp with
+the element it was put on. Ten reference cells (six stamps, a large and a
+turned one, stamps on a sticky and on a shape) match the editor's geometry
+and drawing: 264 cells, 263 pass and 1 warn (list bullets).
 
 The reference images of cells that show artwork (the icon shapes, library
-icons and stickers) are screenshots of that artwork, so they are kept in
+icons, stickers and stamps) are screenshots of that artwork, so they are kept in
 the per-user cache like the artwork itself, and the ones committed earlier
 were removed from the repository's history.
 

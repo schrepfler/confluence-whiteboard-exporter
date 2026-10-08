@@ -94,6 +94,12 @@ _VIEWER_JS = r"""
       nodeMap.set(idx, { group: g, foreignObject: fo, image: img, kind: g.getAttribute('data-kind'), tx: 0, ty: 0 });
       enableDrag(g, idx);
     }
+    // Stamps put on an element move with it.
+    var attached = new Map();
+    nodeMap.forEach(function (nd, id) {
+      var parent = nd.group.getAttribute('data-parent');
+      if (parent && nodeMap.has(parent)) attached.set(parent, (attached.get(parent) || []).concat([id]));
+    });
     var edgeEls = svg.querySelectorAll('path.wb-edge');
     for (var j = 0; j < edgeEls.length; j++) {
       var p = edgeEls[j];
@@ -340,6 +346,10 @@ _VIEWER_JS = r"""
         var startY = e.clientY;
         var origTx = nd.tx;
         var origTy = nd.ty;
+        var riders = (attached.get(idx) || []).map(function (id) {
+          var r = nodeMap.get(id);
+          return { node: r, tx: r.tx, ty: r.ty };
+        });
         var ctm = svg.getScreenCTM();
         var sx = ctm ? ctm.a : 1;
         var sy = ctm ? ctm.d : 1;
@@ -347,6 +357,11 @@ _VIEWER_JS = r"""
           nd.tx = origTx + (ev.clientX - startX) / sx;
           nd.ty = origTy + (ev.clientY - startY) / sy;
           g.setAttribute('transform', 'translate(' + nd.tx + ' ' + nd.ty + ')');
+          riders.forEach(function (r) {
+            r.node.tx = r.tx + (nd.tx - origTx);
+            r.node.ty = r.ty + (nd.ty - origTy);
+            r.node.group.setAttribute('transform', 'translate(' + r.node.tx + ' ' + r.node.ty + ')');
+          });
           redrawEdgesFor(idx);
         }
         function up() {

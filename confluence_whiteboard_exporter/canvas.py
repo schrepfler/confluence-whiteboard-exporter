@@ -140,9 +140,10 @@ def _node(n: Node, box: tuple[float, float, float, float], vault_prefix: str, bo
                           file=_join(vault_prefix, n.image.href))
     if n.kind is Kind.ICON and n.icon_key and (href := board.icons.get(n.icon_key)):  # its SVG file
         return CanvasNode(id=n.id, type="file", x=x, y=y, width=w, height=h, file=_join(vault_prefix, href))
-    if n.kind is Kind.STICKER and n.sprite and (href := board.stickers.get(n.sprite)):  # its image
+    images = board.stamps if n.kind is Kind.STAMP else board.stickers
+    if n.kind in (Kind.STICKER, Kind.STAMP) and n.sprite and (href := images.get(n.sprite)):  # its image
         return CanvasNode(id=n.id, type="file", x=x, y=y, width=w, height=h, file=_join(vault_prefix, href))
-    if n.kind is Kind.STICKER:  # its image was not read: name it
+    if n.kind in (Kind.STICKER, Kind.STAMP):  # its image was not read: name it
         return CanvasNode(id=n.id, type="text", x=x, y=y, width=w, height=h, text=f"*{n.sprite or 'sticker'}*")
     if n.kind is Kind.ICON:  # its artwork is not available: name it
         text = f"*{n.icon}*" + (f"\n\n{n.markdown}" if n.markdown else "")

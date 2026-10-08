@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import io
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .compare import editor_points, hausdorff
@@ -132,9 +132,9 @@ async def _read_packs(frame) -> dict[str, Json | None] | None:  # noqa: ANN001 -
 
 
 async def _cache_artwork(frame, cells: list[Cell]) -> None:  # noqa: ANN001 - a Playwright frame
-    """Keep every icon shape's drawing and the spec's library icons and
-    stickers (base64), as the editor has them, for the report (outside the
-    repo)."""
+    """Keep every icon shape's drawing and the spec's library icons,
+    stickers (base64) and stamps (data URLs), as the editor has them, for
+    the report (outside the repo)."""
     from .drawings import kind_entry
     from .extract import GRAPHICS_PROBE
     from .shapes import KIND_NAMES, is_icon
@@ -150,8 +150,11 @@ async def _cache_artwork(frame, cells: list[Cell]) -> None:  # noqa: ANN001 - a 
     paths = await frame.evaluate("() => globalThis.__whiteboardExporterGraphics.stickerImages()")
     stickers = await frame.evaluate("(p) => globalThis.__whiteboardExporterGraphics.download(p)",
                                     {s: paths[s] for s in sorted(sprites) if s in paths})
+    stamps = await frame.evaluate("(i) => globalThis.__whiteboardExporterGraphics.stampImages(i)",
+                                  sorted({e["spriteId"] for c in cells for e in c.elements if e["type"] == "stamp"}))
     atomic_write_text(artwork_cache_path(), json.dumps(
-        {"drawings": {k: kind_entry(rec) for k, rec in kinds.items()}, "icons": svgs, "stickers": stickers}))
+        {"drawings": {k: kind_entry(rec) for k, rec in kinds.items()}, "icons": svgs, "stickers": stickers,
+         "stamps": stamps}))
 
 
 def image_path(directory: Path, cell: Cell, artwork_dir: Path | None = None) -> Path:
@@ -187,8 +190,8 @@ def refresh(directory: Path, cells: list[Cell], live: Snapshot) -> dict[str, lis
     """Make `live` the references in `directory` and return what changed
     from the ones there, per cell (None if there were none). Cells are
     compared by name, so a spec that gained cells still compares the rest;
-    the image of a cell that has not drifted is left alone, so capture
-    noise does not rewrite it."""
+    a cell that has not drifted keeps its references, image and geometry,
+    so capture noise and a rebuilt board's paste offset do not rewrite it."""
     before = load(directory, cells) if (directory / "geometry.json").exists() else None
     if before is None:
         write(live, directory, cells)
@@ -196,7 +199,10 @@ def refresh(directory: Path, cells: list[Cell], live: Snapshot) -> dict[str, lis
     known = [c.name for c in cells if c.name in before.geometry["cells"]]
     changed = drift(before, live, known)
     changed |= {c.name: ["new"] for c in cells if c.name not in before.geometry["cells"]}
-    write(live, directory, cells, keep=frozenset(n for n in known if n not in changed))
+    keep = frozenset(n for n in known if n not in changed)
+    cells_now = {name: before.geometry["cells"][name] if name in keep else entries
+                 for name, entries in live.geometry["cells"].items()}
+    write(replace(live, geometry={**live.geometry, "cells": cells_now}), directory, cells, keep=keep)
     return changed
 
 

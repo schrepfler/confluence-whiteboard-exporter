@@ -94,8 +94,8 @@ command has `--help`.
   fill or outline, labels join on their edge, line ends other than arrows
   are drawn plain, connectors with a loose end are left out, and dividers
   become thin cards. Stickies are cards in their colour, sections are groups
-  named by their title, and library icons and stickers point at their
-  image files.
+  named by their title, and library icons, stickers and stamps point at
+  their image files.
   `--collision-fix` nudges overlapping cards apart.
 - **svg**: a faithful static replica. Shapes are drawn from the editor's own
   definitions and grown to fit their text as the editor grows them; text is
@@ -105,8 +105,9 @@ command has `--help`.
   (arrows, diamonds, crow's feet, ...) and with labels on or beside the
   line. It contains no script, so it is safe to embed (`![[board.svg]]`) or
   attach.
-- **html**: the same drawing with drag, pan and zoom; connectors and labels
-  follow the shapes you move. Open it in a browser.
+- **html**: the same drawing with drag, pan and zoom; connectors, labels and
+  the stamps put on a shape follow the shapes you move. Open it in a
+  browser.
 
 Text is drawn in Atlassian Sans where it is installed; elsewhere a system
 font stands in, and line breaks can differ slightly. SVG and HTML reference
@@ -127,11 +128,11 @@ extracted by an earlier version shows its icons as named placeholders until
 it is extracted again. Draw a kind as another with `--shape-map
 'server=database'` (svg and html).
 
-Free text, shapes, stickies, sections, stickers (their images read with the
-board, like the icons), connectors with their bends and labels, images and
-freehand lines (drawn straight, end to end) are supported. Tables, mind
-maps, cards, Jira issues, stamps and the other element types
-are left out for now. Anything a format cannot show is reported as a warning
+Free text, shapes, stickies, sections, stickers and stamps (their images
+read with the board, like the icons), connectors with their bends and
+labels, images and freehand lines (drawn straight, end to end) are
+supported. Tables, mind maps, cards, Jira issues and the other element
+types are left out for now. Anything a format cannot show is reported as a warning
 rather than dropped silently. [docs/plan.md](docs/plan.md) lists what is
 still missing, such as the dark theme.
 
@@ -173,14 +174,15 @@ board generated from code with every element the export draws, in its
 variations, and what the editor made of it.
 
 - **The spec** (`confluence_whiteboard_exporter/reference.py`) describes a
-  grid of 254 labelled cells: every shape kind, outlines, fills, colours,
+  grid of 264 labelled cells: every shape kind, outlines, fills, colours,
   text alignment, sizes, headings and lists, free text, connectors of every
   routing, line end, weight and style, bend handles and labels, stickies,
-  sections and stickers.
+  sections, stickers and stamps.
 - **The references** (`tests/reference/golden/`, committed) are the editor's
   drawn geometry for each cell (`geometry.json`: each element's box, each
   connector's path, each label's box) and an image of each cell at 100%
-  (`images/`). The cells that show the editor's artwork (icons, stickers)
+  (`images/`). The cells that show the editor's artwork (icons, stickers,
+  stamps)
   keep their images in the per-user cache instead, so the repo carries none
   of it; a clone without them still runs every test, on geometry.
 - **The tests** (`tests/test_reference_geometry.py`) export the spec and
@@ -220,8 +222,9 @@ cell the editor now draws differently: a box or path moved by more than
 half a unit, an element gone or new, or more than 1% of the cell's drawn
 pixels changed. Such a failure means the editor changed, not the export.
 Once the change is understood, `--update-goldens` rewrites
-`tests/reference/golden/` and lists what changed; the image of a cell that
-did not change is left alone, so capture noise does not churn the files.
+`tests/reference/golden/` and lists what changed; the references of a cell
+that did not change are left alone, so capture noise does not churn the
+files.
 The offline tests then show what the export must follow. `reference
 snapshot` does the same update from the command line. Both only read the
 board. `--live` also lists the icon packs the editor offers: it fails if one
@@ -251,7 +254,7 @@ an editor update (icon artwork is never among them: it is read per board):
 | `board.py` | Normalises either kind of dump into one `Board`; text layout, box sizes and stable ids |
 | `adf.py`, `palette.py` | Rich text (Atlassian Document Format) to HTML and Markdown; the editor's colours |
 | `shapes.py`, `connectors.py` | The editor's shape drawings, dash layouts and content boxes; its connector router, line ends and where along a connector a label sits |
-| `drawings.py`, `graphics_probe.js` | The editor's drawings as data; reading the artwork of a board's icons from the editor |
+| `drawings.py`, `graphics_probe.js` | The editor's drawings as data; reading the artwork of a board's icons, stickers and stamps from the editor |
 | `canvas.py`, `svg.py`, `html.py` | Renderers |
 | `deploy.py`, `storage.py` | Writes outputs, optionally into an Obsidian vault; where files go |
 | `reference.py`, `editor.py`, `geometry_probe.js` | The reference board's spec; pasting it into the editor and reading back what it draws |

@@ -12,6 +12,7 @@
 //   libraryCatalogue(cs)  -> {collection: {category: [[iconId, SVG path]]}}
 //   libraryCollections()  -> the packs the editor's icon loader offers
 //   stickerImages()       -> {stickerId: its WebP's path on the site}
+//   stampImages(ids)      -> {stampId: its image as a data URL}
 //   download(paths)       -> {key: base64 of the file at paths[key]}
 //
 // Modules and exports are found by shape, not name: the bundle's export
@@ -185,6 +186,106 @@
     return out;
   }
 
+  // Each stamp as the editor draws it, by stamp id, as a data URL. The
+  // canvas draws stamps from a texture atlas (`stamps.<hash>.webp`), white
+  // outline and shadow included, one square per stamp spread over its box;
+  // the atlas's frame map (`stamps.data.<hash>.br`, MessagePack) gives each
+  // square as [u0, u1, v0, v1], v up from the bottom. Without them a stamp
+  // is its bare symbol (`stamp-<id>`) from the editor's icon sprite
+  // (`icons.<hash>.svg`), as the picker shows it.
+  async function stampImages(ids) {
+    const out = {};
+    try {
+      const texels = await assetNamed(/\/whiteboards\/assets\/stamps\.data\.[A-Za-z0-9_-]+\.br/);
+      const atlas = await assetNamed(/\/whiteboards\/assets\/stamps\.[A-Za-z0-9_-]+\.webp/);
+      if (texels && atlas) Object.assign(out, await atlasStamps(texels, atlas, ids));
+    } catch (_e) { /* the symbols stand in */ }
+    const rest = ids.filter((id) => !(id in out));
+    const sprite = rest.length ? await assetNamed(/\/whiteboards\/assets\/icons\.[A-Za-z0-9_-]+\.svg/) : null;
+    if (!sprite) return out;
+    const doc = new DOMParser().parseFromString(await (await fetch(sprite)).text(), 'image/svg+xml');
+    for (const id of rest) {
+      const symbol = doc.getElementById(`stamp-${id}`);
+      if (!symbol) continue;
+      const box = symbol.getAttribute('viewBox') || '0 0 46 46';
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${box}">${symbol.innerHTML}</svg>`;
+      out[id] = 'data:image/svg+xml;base64,' + base64(new TextEncoder().encode(svg));
+    }
+    return out;
+  }
+
+  async function atlasStamps(texels, atlas, ids) {
+    const frames = unpack(new Uint8Array(await (await fetch(texels)).arrayBuffer()));
+    const sheet = await createImageBitmap(await (await fetch(atlas)).blob());
+    const out = {};
+    for (const id of ids) {
+      const f = frames[id];
+      if (!Array.isArray(f) || f.length !== 4) continue;
+      const [u0, u1, v0, v1] = f;  // texel centres: the square reaches half a texel further
+      const x = Math.round(u0 * sheet.width - 0.5), w = Math.round(u1 * sheet.width + 0.5) - x;
+      const y = Math.round((1 - v1) * sheet.height - 0.5), h = Math.round((1 - v0) * sheet.height + 0.5) - y;
+      const canvas = new OffscreenCanvas(w, h);
+      canvas.getContext('2d').drawImage(sheet, x, y, w, h, 0, 0, w, h);
+      const png = new Uint8Array(await (await canvas.convertToBlob({ type: 'image/png' })).arrayBuffer());
+      out[id] = 'data:image/png;base64,' + base64(png);
+    }
+    return out;
+  }
+
+  // Just enough MessagePack for a frame map: maps, arrays, strings, numbers.
+  function unpack(bytes) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let at = 0;
+    const text = (n) => { const s = new TextDecoder().decode(bytes.subarray(at, at + n)); at += n; return s; };
+    const items = (n) => { const a = []; for (let i = 0; i < n; i++) a.push(next()); return a; };
+    const entries = (n) => { const o = {}; for (let i = 0; i < n; i++) { const k = next(); o[k] = next(); } return o; };
+    const read = (n, get) => { at += n; return get.call(view, at - n); };
+    function next() {
+      const b = bytes[at++];
+      if (b <= 0x7f) return b;
+      if (b >= 0xe0) return b - 0x100;
+      if ((b & 0xf0) === 0x80) return entries(b & 0x0f);
+      if ((b & 0xf0) === 0x90) return items(b & 0x0f);
+      if ((b & 0xe0) === 0xa0) return text(b & 0x1f);
+      switch (b) {
+        case 0xc0: return null;
+        case 0xc2: return false;
+        case 0xc3: return true;
+        case 0xca: return read(4, view.getFloat32);
+        case 0xcb: return read(8, view.getFloat64);
+        case 0xcc: return read(1, view.getUint8);
+        case 0xcd: return read(2, view.getUint16);
+        case 0xce: return read(4, view.getUint32);
+        case 0xd0: return read(1, view.getInt8);
+        case 0xd1: return read(2, view.getInt16);
+        case 0xd2: return read(4, view.getInt32);
+        case 0xd9: return text(read(1, view.getUint8));
+        case 0xda: return text(read(2, view.getUint16));
+        case 0xdc: return items(read(2, view.getUint16));
+        case 0xde: return entries(read(2, view.getUint16));
+        default: throw new Error('unexpected MessagePack byte ' + b);
+      }
+    }
+    return next();
+  }
+
+  // The first path on the site matching `re` that a module names.
+  async function assetNamed(re) {
+    for (const url of moduleUrls()) {
+      let text;
+      try { text = await (await fetch(url)).text(); } catch (_e) { continue; }
+      const m = re.exec(text);
+      if (m) return m[0];
+    }
+    return null;
+  }
+
+  function base64(bytes) {
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(binary);
+  }
+
   // Files on the site, as base64, by the key they were asked for under.
   async function download(paths) {
     const out = {};
@@ -192,10 +293,7 @@
       try {
         const res = await fetch(new URL(path, location.href).href);
         if (!res.ok) continue;
-        const bytes = new Uint8Array(await res.arrayBuffer());
-        let binary = '';
-        for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-        out[key] = btoa(binary);
+        out[key] = base64(new Uint8Array(await res.arrayBuffer()));
       } catch (_e) { /* left as a placeholder */ }
     }
     return out;
@@ -233,6 +331,6 @@
   }
 
   globalThis.__whiteboardExporterGraphics = {
-    shapeDrawings, libraryIcons, libraryCatalogue, libraryCollections, stickerImages, download,
+    shapeDrawings, libraryIcons, libraryCatalogue, libraryCollections, stickerImages, stampImages, download,
   };
 })();

@@ -87,6 +87,8 @@ def placeholder(cell: Cell, artwork: Json | None = None) -> str | None:
             return "an icon shape whose artwork was not read: a tile stands in (run reference snapshot)"
         if e["type"] == "sticker" and e["spriteId"] not in artwork.get("stickers", {}):
             return "a sticker whose image was not read: a tile stands in (run reference snapshot)"
+        if e["type"] == "stamp" and e["spriteId"] not in artwork.get("stamps", {}):
+            return "a stamp whose image was not read: a tile stands in (run reference snapshot)"
     return None
 
 
@@ -108,11 +110,12 @@ def render_cells(cells: list[Cell], font: Path | None = None, artwork: Json | No
     artwork = artwork or {}
     icons = {key: "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
              for key, svg in artwork.get("icons", {}).items()}
+    stamps = artwork.get("stamps", {})  # data URLs already
     stickers = {sprite: "data:image/webp;base64," + data for sprite, data in artwork.get("stickers", {}).items()}
     board = from_dump(DumpFile.model_validate(
         {"board": {"boardId": "reference", "title": "reference", "spaceKey": "REF"},
          "strategy": "clipboard", "elements": [ClipboardElement.model_validate(e) for e in elements],
-         "drawings": artwork.get("drawings", {}), "icons": icons, "stickers": stickers}))
+         "drawings": artwork.get("drawings", {}), "icons": icons, "stickers": stickers, "stamps": stamps}))
     svg = render_svg(board)
     face = ""
     if font is not None and font.exists():

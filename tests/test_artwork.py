@@ -1,4 +1,4 @@
-"""Icon and sticker artwork read from the editor per board (drawings.py, the
+"""Icon, sticker and stamp artwork read from the editor per board (drawings.py, the
 extractor's read_artwork) and drawn by the renderers; the repo carries none
 of it."""
 
@@ -103,7 +103,8 @@ def test_the_extractor_reads_only_the_artwork_a_board_uses(tmp_path: Path) -> No
     elements = [ClipboardElement.model_validate(e) for e in (
         {"type": "shape", "shape": 33}, {"type": "shape", "shape": 1}, S3)]
     frame = _Frame()
-    drawings, icons, _ = asyncio.run(read_artwork(frame, elements, None, tmp_path / "media"))
+    art = asyncio.run(read_artwork(frame, elements, None, tmp_path / "media"))
+    drawings, icons = art.drawings, art.icons
     assert frame.asked[0] == [33], "the icon kind only, not the rectangle"
     assert list(drawings) == ["33"] and drawings["33"]["key"] == "key"
     href = icons["aws/storage/Amazon-Simple-Storage-Service"]
@@ -113,7 +114,7 @@ def test_the_extractor_reads_only_the_artwork_a_board_uses(tmp_path: Path) -> No
 def test_without_media_library_icons_are_not_read(tmp_path: Path) -> None:
     frame = _Frame()
     art = asyncio.run(read_artwork(frame, [ClipboardElement.model_validate(S3)], None, None))
-    assert (art, frame.asked) == (({}, {}, {}), [])
+    assert (art.drawings, art.icons, art.stickers, art.stamps, frame.asked) == ({}, {}, {}, {}, [])
 
 
 # A shape kind newer than shape_data.json, as the editor's registry hands it over.
@@ -181,8 +182,8 @@ def test_fiber_dump_reads_stickers() -> None:
 
 def test_the_extractor_saves_a_boards_sticker_images(tmp_path: Path) -> None:
     frame = _Frame()
-    _, _, stickers = asyncio.run(read_artwork(frame, [ClipboardElement.model_validate(LAMBDA)], None,
-                                              tmp_path / "media"))
+    stickers = asyncio.run(read_artwork(frame, [ClipboardElement.model_validate(LAMBDA)], None,
+                                        tmp_path / "media")).stickers
     assert stickers == {"AWS-Lambda": "media/sticker-AWS-Lambda.webp"}
     assert (tmp_path / "media" / "sticker-AWS-Lambda.webp").read_bytes() == b"RIFF"
 
@@ -193,3 +194,57 @@ def test_a_turned_box_compares_by_the_upright_box_round_it() -> None:
     # As the editor reported it for a 160 square turned 0.6.
     assert _bounds(0, 0, 160, 160, 0.6) == pytest.approx((-31.2, -31.2, 222.4, 222.4), abs=0.1)
     assert _bounds(0, 0, 160, 100, 0.0) == (0, 0, 160, 100)
+
+
+# -------------------------------------------------------------------- stamps
+
+STICKY = {"type": "sticky", "position": {"x": 0, "y": 0}, "size": {"x": 144, "y": 144}}
+# Put on the sticky: its centre is the sticky's top-left plus the offset.
+THUMBS = {"type": "stamp", "position": {"x": 29.36, "y": -31.38}, "size": {"x": 60, "y": 60}, "rotation": 0.0,
+          "spriteId": "thumbs-up", "attachedTo": {"parentIndex": 0, "offset": [101.36, 40.62]}}
+
+
+def test_a_stamp_is_its_svg_on_the_element_it_was_put_on() -> None:
+    board = _board(STICKY, THUMBS, stamps={"thumbs-up": "media/stamp-thumbs-up.png"})
+    sticky, stamp = board.nodes
+    assert (stamp.kind.value, stamp.sprite, stamp.parent) == ("stamp", "thumbs-up", sticky.id)
+    assert (stamp.x, stamp.y, stamp.w) == pytest.approx((-0.64, -61.38, 60))
+    svg = render_svg(board)
+    assert f'data-parent="{sticky.id}"' in svg and 'href="media/stamp-thumbs-up.png"' in svg
+    card = render_canvas(board).nodes[-1]
+    assert (card.type, card.file) == ("file", "media/stamp-thumbs-up.png")
+
+
+def test_a_stamp_without_its_svg_is_a_reported_placeholder(caplog) -> None:
+    caplog.set_level(logging.WARNING)
+    svg = render_svg(_board(STICKY, THUMBS))
+    assert "<image" not in svg and ">thumbs-up<" in svg
+    assert any("1 stamp(s) drawn as placeholders" in r.getMessage() for r in caplog.records)
+
+
+def test_fiber_dump_reads_stamps_and_what_they_are_on() -> None:
+    fiber = {"board": {"N": {"t": "sticky", "c": [67, 127, 0, 0, 67, 94, 0, 0, 67, 56, 0, 0]},
+                       "M": {"t": "stamp", "si": "fire", "at": {"offset": {"0": 101, "1": 40}, "parentId": "N"}}},
+             "dimensions": [{"key": "p#N", "val": [0, 0]}, {"key": "s#N", "val": [144, 144]},
+                            {"key": "p#M", "val": [29, -32]}, {"key": "s#M", "val": [60, 60]},
+                            {"key": "r#M", "val": 0}], "zindex": ["N", "M"]}
+    board = from_dump(DumpFile.model_validate({"board": {"boardId": "1", "title": "t", "spaceKey": "S"},
+                                               "strategy": "fiber", "fiber_dump": fiber}))
+    stamp = next(n for n in board.nodes if n.sprite == "fire")
+    assert (stamp.kind.value, stamp.parent, stamp.x, stamp.y) == ("stamp", "N", -1, -62)
+
+
+def test_the_extractor_saves_a_boards_stamps(tmp_path: Path) -> None:
+    class Frame(_Frame):
+        async def evaluate(self, script: str, arg: object = None) -> object:
+            if script.startswith("(") and "stampImages" in script:
+                self.asked.append(arg)
+                return {i: "data:image/png;base64,iVBORw==" for i in arg} | {"x": "data:text/html;base64,"}
+            return await super().evaluate(script, arg)
+
+    frame = Frame()
+    elements = [ClipboardElement.model_validate(e) for e in (STICKY, THUMBS)]
+    stamps = asyncio.run(read_artwork(frame, elements, None, tmp_path / "media")).stamps
+    assert frame.asked == [["thumbs-up"]]
+    assert stamps == {"thumbs-up": "media/stamp-thumbs-up.png"}, "only images are saved"
+    assert (tmp_path / "media" / "stamp-thumbs-up.png").read_bytes() == b"\x89PNG"

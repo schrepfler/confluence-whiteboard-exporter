@@ -123,6 +123,7 @@ class Kind(StrEnum):
     STICKY = "sticky"  # a sticky note: coloured, with text, growing downward to fit it
     SECTION = "section"  # a titled frame; what lies on it is drawn over it
     STICKER = "sticker"  # a picture from one of the editor's sticker packs
+    STAMP = "stamp"  # a reaction (thumbs up, fire, ...), often put on another element
 
 
 @dataclass(frozen=True)
@@ -155,8 +156,9 @@ class Node:
     icon: str | None = None  # ICON: the library icon's name
     title: str | None = None  # SECTION: its title, drawn on a tab above it (stroke: the tab and border; color: the title)
     icon_key: str | None = None  # ICON: "collection/category/iconId", which its artwork is kept by
-    sprite: str | None = None  # STICKER: the sticker's id, which its image is kept by
-    rotation: float = 0.0  # STICKER: radians, clockwise on screen, about its centre
+    sprite: str | None = None  # STICKER, STAMP: its id, which its image is kept by
+    rotation: float = 0.0  # STICKER, STAMP: radians, clockwise on screen, about its centre
+    parent: str | None = None  # STAMP: the element it was put on, which it moves with
     shadow: bool = False  # SECTION: drawn with a drop shadow
 
     @cached_property
@@ -216,6 +218,7 @@ class Board:
     drawings: dict[int, dict[str, Any]] = field(default_factory=dict)  # icon shapes' artwork, by kind
     icons: dict[str, str] = field(default_factory=dict)  # library icons' SVG files, by icon_key
     stickers: dict[str, str] = field(default_factory=dict)  # stickers' images, by sprite
+    stamps: dict[str, str] = field(default_factory=dict)  # stamps' images, by sprite
 
     def __post_init__(self) -> None:
         self._by_id = {n.id: n for n in self.nodes}
@@ -244,11 +247,12 @@ def from_dump(dump: DumpFile, *, report: bool = True) -> Board:
             e.target = None
     losses.icons = sum(1 for n in nodes if n.kind is Kind.ICON and n.icon_key not in dump.icons)
     losses.stickers = sum(1 for n in nodes if n.kind is Kind.STICKER and n.sprite not in dump.stickers)
+    losses.stamps = sum(1 for n in nodes if n.kind is Kind.STAMP and n.sprite not in dump.stamps)
     if report:
         losses.report(dump.board.boardId)
     drawings = {int(k): v for k, v in dump.drawings.items() if k.isdigit()}
     return Board(meta=dump.board, nodes=nodes, edges=edges, drawings=drawings, icons=dict(dump.icons),
-                 stickers=dict(dump.stickers))
+                 stickers=dict(dump.stickers), stamps=dict(dump.stamps))
 
 
 @dataclass
@@ -260,6 +264,7 @@ class _Losses:
     missing_images: int = 0
     icons: int = 0
     stickers: int = 0
+    stamps: int = 0
 
     def enum(self, table: dict[int, str], value: Any, what: str, default: str) -> str:
         if value is None:
@@ -282,6 +287,9 @@ class _Losses:
         if self.stickers:
             log.warning("board %s: %d sticker(s) drawn as placeholders (their image was not read)",
                         board_id, self.stickers)
+        if self.stamps:
+            log.warning("board %s: %d stamp(s) drawn as placeholders (their image was not read)",
+                        board_id, self.stamps)
         if self.missing_images:
             log.warning("board %s: %d image(s) were not downloaded; drawn as placeholders",
                         board_id, self.missing_images)
@@ -313,6 +321,11 @@ def _from_clipboard(
                 side=losses.enum(LABEL_SIDES, e.pathOffsetPosition, "label side", "centre"),
                 id=ids[i],
             ))
+        elif e.type == "stamp" and e.position and e.size:
+            x, y, w, h = _centred(e.position.x, e.position.y, e.size.x, e.size.y)
+            parent = (e.attachedTo or {}).get("parentIndex")
+            nodes.append(Node(id=ids[i], kind=Kind.STAMP, x=x, y=y, w=w, h=h, sprite=e.spriteId,
+                              rotation=float(e.rotation or 0.0), parent=_index_id(parent, ids)))
         elif node := _clip_node(ids[i], e, media, losses):
             nodes.append(node)
         else:
@@ -416,9 +429,12 @@ def _clip_node(nid: str, e: ClipboardElement, media: dict[str, str], losses: _Lo
 
 
 def _sticker_node(nid: str, box: Box, raw: dict[str, Any], dims: dict[str, Any]) -> Node:
+    """A sticker or stamp from the Yjs document (a stamp's `at` names the
+    element it was put on)."""
     x, y, w, h = box
-    return Node(id=nid, kind=Kind.STICKER, x=x, y=y, w=w, h=h, sprite=_str(raw.get("si")),
-                rotation=_num(dims.get("r"), 0.0))
+    attached = raw.get("at") if isinstance(raw.get("at"), dict) else {}
+    return Node(id=nid, kind=Kind.STAMP if raw.get("t") == "stamp" else Kind.STICKER, x=x, y=y, w=w, h=h,
+                sprite=_str(raw.get("si")), rotation=_num(dims.get("r"), 0.0), parent=_str(attached.get("parentId")))
 
 
 def _section(nid: str, box: Box, stored: Rgb | None, title: str | None, shadow: bool) -> Node:
@@ -649,7 +665,7 @@ def _from_fiber(fd: FiberDump, media: dict[str, str], losses: _Losses) -> tuple[
             raw_rgb = _float32_rgb(raw.get("c"))
             nodes.append(_section(eid, _centred(*_pair(d.get("p")), *_pair(d.get("s"))), raw_rgb,
                                   _str(raw.get("ti")), raw.get("ds") is True))
-        elif t == "sticker" and d.get("p") and d.get("s"):
+        elif t in ("sticker", "stamp") and d.get("p") and d.get("s"):
             nodes.append(_sticker_node(eid, _centred(*_pair(d.get("p")), *_pair(d.get("s"))), raw, d))
         elif t == "image" and raw.get("fi"):
             x, y, w, h = _centred(*_pair(d.get("p")), *_pair(d.get("s")))
