@@ -226,7 +226,7 @@ def reference_report(target: Path, no_font: bool) -> None:
     import json as _json
 
     from .reference import spec
-    from .report import build, write
+    from .report import build, load_artwork, write
     from .storage import editor_font_path
 
     golden_path = GOLDEN_DIR / "geometry.json"
@@ -240,7 +240,11 @@ def reference_report(target: Path, no_font: bool) -> None:
         click.echo("  the editor's font is not cached (run `confluence-whiteboard-exporter reference "
                    "snapshot`); our text is set in a fallback font", err=True)
         font = None
-    rows = build(spec(), golden, GOLDEN_DIR / "images", font)
+    artwork = load_artwork()
+    if artwork is None:
+        click.echo("  the icon artwork is not cached (run `confluence-whiteboard-exporter reference "
+                   "snapshot`); icons are placeholders", err=True)
+    rows = build(spec(), golden, GOLDEN_DIR / "images", font, artwork)
     write(rows, target, golden.get("editor_bundle", ""))
     counts = {s: sum(r.status == s for r in rows) for s in ("pass", "warn", "known", "fail")}
     click.echo(f"wrote {target}: {counts['pass']} pass, {counts['warn']} warn, {counts['known']} known, "

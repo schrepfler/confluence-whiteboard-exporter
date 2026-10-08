@@ -100,7 +100,26 @@ async def _read(base_url: str, space: str, board_id: str, session: Path, cells: 
         rects = {name: (x + ox, y + oy, w, h) for name, (x, y, w, h) in cell_rects(cells).items()}
         images = await capture_cells(page, frame, rects)
         await fetch_editor_font(page, frame, editor_font_path())
+        await _cache_artwork(frame, cells)
         return board, centres, geometry, bundle, images
+
+
+async def _cache_artwork(frame, cells: list[Cell]) -> None:  # noqa: ANN001 - a Playwright frame
+    """Keep every icon shape's drawing and the spec's library icons, as
+    the editor has them, for the report (outside the repo)."""
+    from .drawings import kind_entry
+    from .extract import GRAPHICS_PROBE
+    from .shapes import KIND_NAMES, is_icon
+    from .storage import artwork_cache_path, atomic_write_text
+
+    icons = [{"collection": e["collection"], "category": e["category"], "iconId": e["iconId"]}
+             for c in cells for e in c.elements if e["type"] == "advanced-icon"]
+    await frame.evaluate(GRAPHICS_PROBE)
+    kinds = await frame.evaluate("(k) => globalThis.__whiteboardExporterGraphics.shapeDrawings(k)",
+                                 [k for k in KIND_NAMES if is_icon(k)])
+    svgs = await frame.evaluate("(i) => globalThis.__whiteboardExporterGraphics.libraryIcons(i)", icons)
+    atomic_write_text(artwork_cache_path(), json.dumps(
+        {"drawings": {k: kind_entry(rec) for k, rec in kinds.items()}, "icons": svgs}))
 
 
 def write(snapshot: Snapshot, directory: Path, keep: frozenset[str] = frozenset()) -> None:

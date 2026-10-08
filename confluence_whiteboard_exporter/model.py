@@ -125,3 +125,8 @@ class DumpFile(BaseModel):
     elements: list[ClipboardElement] = Field(default_factory=list)
     fiber_dump: FiberDump | None = None
     media: dict[str, str] = Field(default_factory=dict)
+    # Icon artwork read from the editor for this board (never part of the
+    # repo): the icon shapes' drawings by kind, as drawings.kind_entry gives
+    # them, and the library icons' SVG files by "collection/category/iconId".
+    drawings: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    icons: dict[str, str] = Field(default_factory=dict)

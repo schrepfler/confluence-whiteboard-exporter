@@ -169,7 +169,7 @@ Each element type declares which box it uses
 | `path` | YPath | Freehand line, e.g. a divider | ✅ (straight segment) |
 | `pathWaypoint` | YPathWaypoint | Bend point of a connector | ✅ (bends its connector) |
 | `pathLabel` | YPathLabel | Label on a connector | ✅ (on its connector) |
-| `advanced-icon` | — | Library icon, e.g. AWS (`iconId`, `category`, `collection`) | ✅ (named placeholder) |
+| `advanced-icon` | — | Library icon, e.g. AWS (`iconId`, `category`, `collection`) | ✅ (its SVG, read per board) |
 | `sticky` | YSticky | Sticky note | ✅ |
 | `section` | YSection | Titled frame grouping elements | ✅ |
 | `group` | YGroup | Grouping without a frame | ❌ |
@@ -355,15 +355,27 @@ A section may swap them: the UML start node, for example, is a dot filled
 with the line colour.
 
 `confluence-whiteboard-exporter` draws every kind from these definitions,
-stored in `confluence_whiteboard_exporter/shape_data.json`. Icon artwork is
-Atlassian's and is not included, so icons are drawn as placeholders with
-their label below, and a warning names them. To refresh the data after an
-editor update:
+stored in `confluence_whiteboard_exporter/shape_data.json`, except the
+icons: their artwork is Atlassian's and is not in the repo. The extractor
+reads the drawings of the icons a board uses from the live editor
+(`graphics_probe.js`) into the board's dump, in the same form; without them
+an icon is a placeholder with its label below, and a warning names it. The
+icons are drawn as they are, and so is the actor: the editor insets every
+other kind's outline by half its width, but these drawings leave room of
+their own. To refresh the data after an editor update:
 
 1. Paste `scripts/dump_shapes.js` into the DevTools console of an open
    whiteboard. It reads the module the page has already loaded and copies a
    JSON dump.
 2. Run `pbpaste | uv run scripts/build_shape_data.py`.
+
+**Library icons** (AWS, Azure, GCP; `advanced-icon`) come from collection
+modules the editor loads on demand: per category, a map from icon id to
+its `graphic` (the drawing the canvas paints, 64 units square, in colours
+of its own) and its `svg`, the original SVG file on the site
+(`/whiteboards/assets/<name>.<hash>.svg`). The extractor saves the SVG of
+each icon a board uses in its `media/` folder; the SVG and HTML draw it,
+and JSON Canvas points a file node at it.
 
 Atlassian's own SVG exporter does not use these drawings. It approximates a
 few shapes (for example, rounded corners at 10% of the width) and falls back
@@ -403,27 +415,27 @@ to a rectangle for the rest.
 | 29 | decision | Decision | flowchart | same as 4 |
 | 30 | connector | Connector | flowchart | same as 2 |
 | 31 | merge | Merge | flowchart | same as 6 |
-| 32 | cloud | Cloud | advanced | icon: placeholder, label below |
-| 33 | key | Key | advanced | icon: placeholder, label below |
-| 34 | server | Server | advanced | icon: placeholder, label below |
-| 35 | archive | Archive | advanced | icon: placeholder, label below |
-| 36 | browser | Browser | advanced | icon: placeholder, label below |
-| 37 | user | User | advanced | icon: placeholder, label below |
-| 38 | compute | Compute | advanced | icon: placeholder, label below |
-| 39 | computer | Computer | advanced | icon: placeholder, label below |
-| 40 | file | File | advanced | icon: placeholder, label below |
-| 41 | firewall | Firewall | advanced | icon: placeholder, label below |
-| 42 | folder | Folder | advanced | icon: placeholder, label below |
-| 43 | frontend | Frontend | advanced | icon: placeholder, label below |
-| 44 | internet | Internet | advanced | icon: placeholder, label below |
-| 45 | lock | Lock | advanced | icon: placeholder, label below |
-| 46 | mail | Mail | advanced | icon: placeholder, label below |
-| 47 | mobile | Mobile | advanced | icon: placeholder, label below |
-| 48 | settings | Settings | advanced | icon: placeholder, label below |
-| 49 | shield | Shield | advanced | icon: placeholder, label below |
-| 50 | users | Users | advanced | icon: placeholder, label below |
-| 51 | switch | Switch | advanced | icon: placeholder, label below |
-| 52 | database-advanced | Database (advanced; key derived from the enum name) | advanced | icon: placeholder, label below |
+| 32 | cloud | Cloud | advanced | icon: artwork read per board, label below |
+| 33 | key | Key | advanced | icon: artwork read per board, label below |
+| 34 | server | Server | advanced | icon: artwork read per board, label below |
+| 35 | archive | Archive | advanced | icon: artwork read per board, label below |
+| 36 | browser | Browser | advanced | icon: artwork read per board, label below |
+| 37 | user | User | advanced | icon: artwork read per board, label below |
+| 38 | compute | Compute | advanced | icon: artwork read per board, label below |
+| 39 | computer | Computer | advanced | icon: artwork read per board, label below |
+| 40 | file | File | advanced | icon: artwork read per board, label below |
+| 41 | firewall | Firewall | advanced | icon: artwork read per board, label below |
+| 42 | folder | Folder | advanced | icon: artwork read per board, label below |
+| 43 | frontend | Frontend | advanced | icon: artwork read per board, label below |
+| 44 | internet | Internet | advanced | icon: artwork read per board, label below |
+| 45 | lock | Lock | advanced | icon: artwork read per board, label below |
+| 46 | mail | Mail | advanced | icon: artwork read per board, label below |
+| 47 | mobile | Mobile | advanced | icon: artwork read per board, label below |
+| 48 | settings | Settings | advanced | icon: artwork read per board, label below |
+| 49 | shield | Shield | advanced | icon: artwork read per board, label below |
+| 50 | users | Users | advanced | icon: artwork read per board, label below |
+| 51 | switch | Switch | advanced | icon: artwork read per board, label below |
+| 52 | database-advanced | Database (advanced; key derived from the enum name) | advanced | icon: artwork read per board, label below |
 | 53 | alternate-process | Alternate process | flowchart | same as 3 |
 | 54 | use-case | Use case | uml | same as 2 |
 | 55 | classifier | Classifier | uml | same as 16 |

@@ -153,6 +153,7 @@ class Node:
     points: tuple[Point, ...] = ()  # LINE endpoints
     icon: str | None = None  # ICON: the library icon's name
     title: str | None = None  # SECTION: its title, drawn on a tab above it (stroke: the tab and border; color: the title)
+    icon_key: str | None = None  # ICON: "collection/category/iconId", which its artwork is kept by
     shadow: bool = False  # SECTION: drawn with a drop shadow
 
     @cached_property
@@ -209,6 +210,8 @@ class Board:
     meta: BoardMeta
     nodes: list[Node]  # z-order, back to front
     edges: list[Edge]
+    drawings: dict[int, dict[str, Any]] = field(default_factory=dict)  # icon shapes' artwork, by kind
+    icons: dict[str, str] = field(default_factory=dict)  # library icons' SVG files, by icon_key
 
     def __post_init__(self) -> None:
         self._by_id = {n.id: n for n in self.nodes}
@@ -233,8 +236,10 @@ def from_dump(dump: DumpFile) -> Board:
             e.source = None
         if e.target not in node_ids:
             e.target = None
+    losses.icons = sum(1 for n in nodes if n.kind is Kind.ICON and n.icon_key not in dump.icons)
     losses.report(dump.board.boardId)
-    return Board(meta=dump.board, nodes=nodes, edges=edges)
+    drawings = {int(k): v for k, v in dump.drawings.items() if k.isdigit()}
+    return Board(meta=dump.board, nodes=nodes, edges=edges, drawings=drawings, icons=dict(dump.icons))
 
 
 @dataclass
@@ -369,11 +374,11 @@ def _clip_node(nid: str, e: ClipboardElement, media: dict[str, str], losses: _Lo
             return _line(nid, (start, end), Rgb.from_vector(e.color), style, float(e.stroke or 1))
     if e.type == "advanced-icon" and e.position:
         x, y, w, h = _drawn_box(e)
-        losses.icons += 1
         return Node(
             id=nid, kind=Kind.ICON, x=x, y=y, w=w, h=h,
             stroke=Rgb.from_vector(e.color),
             icon=_icon_name(e.iconId) or e.category or "icon",
+            icon_key=icon_key(e.collection, e.category, e.iconId),
             adf=_fix_mojibake(e.text),
         )
     if e.type == "sticky" and e.position:
@@ -427,6 +432,11 @@ def _with_shared_pictures(media: dict[str, str], images: Iterable[tuple[str | No
     images = [(f, h) for f, h in images if f]
     by_hash = {h: media[f] for f, h in images if h and f in media}
     return {**{f: by_hash[h] for f, h in images if f not in media and h in by_hash}, **media}
+
+
+def icon_key(collection: str | None, category: str | None, icon_id: str | None) -> str | None:
+    """How a library icon's artwork is kept: 'aws/storage/Amazon-Simple-Storage-Service'."""
+    return f"{collection}/{category}/{icon_id}" if collection and category and icon_id else None
 
 
 def _icon_name(icon_id: str | None) -> str | None:

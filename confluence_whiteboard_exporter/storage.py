@@ -24,6 +24,12 @@ def editor_font_path() -> Path:
     return Path(user_cache_dir(APP)) / "fonts" / "AtlassianSans-latin.woff2"
 
 
+def artwork_cache_path() -> Path:
+    """The icon artwork read from the editor by `reference snapshot`, for
+    the icon cells of the reference report. Never part of the repo."""
+    return Path(user_cache_dir(APP)) / "artwork.json"
+
+
 def chrome_profile_dir() -> Path:
     """Private, persistent profile for `auth attach`. Kept out of the shared
     system temp dir so other local users cannot pre-create or read it."""

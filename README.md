@@ -93,9 +93,9 @@ command has `--help`.
   and edges Obsidian routes itself: shapes become cards coloured like their
   fill or outline, labels join on their edge, line ends other than arrows
   are drawn plain, connectors with a loose end are left out, and dividers
-  become thin cards. Stickies are cards in their colour, and sections are
-  groups named by their title. `--collision-fix` nudges overlapping cards
-  apart.
+  become thin cards. Stickies are cards in their colour, sections are groups
+  named by their title, and library icons point at their SVG files.
+  `--collision-fix` nudges overlapping cards apart.
 - **svg**: a faithful static replica. Shapes are drawn from the editor's own
   definitions and grown to fit their text as the editor grows them; text is
   laid out with the editor's character widths, weights and spacing; colours
@@ -114,10 +114,13 @@ folder.
 
 ### What is drawn
 
-All 89 shape kinds are drawn from the editor's definitions, except the 21
-architecture icons (server, cloud, user, ...): their artwork is Atlassian's,
-so they are drawn as placeholders with their label below. Library icons (AWS
-and others) are named tiles for the same reason. Draw a kind as another with
+All 89 shape kinds are drawn from the editor's definitions. The 21 icon
+shapes (server, cloud, user, ...) and library icons (AWS, Azure, GCP) are
+Atlassian's and the clouds' artwork, which this repo does not carry: when a
+board is extracted, the artwork of the icons it uses is read from the live
+editor into its own `dump.json` and `media/` folder, so the exports draw the
+real icons. A board extracted by an earlier version shows them as named
+placeholders until it is extracted again. Draw a kind as another with
 `--shape-map 'server=database'` (svg and html).
 
 Free text, shapes, stickies, sections, connectors with their bends and
@@ -219,7 +222,7 @@ board.
 ### Data taken from the editor
 
 Three files hold what was read from the live editor; regenerate them after
-an editor update:
+an editor update (icon artwork is never among them: it is read per board):
 
 | File | What | How |
 |---|---|---|
@@ -239,6 +242,7 @@ an editor update:
 | `board.py` | Normalises either kind of dump into one `Board`; text layout, box sizes and stable ids |
 | `adf.py`, `palette.py` | Rich text (Atlassian Document Format) to HTML and Markdown; the editor's colours |
 | `shapes.py`, `connectors.py` | The editor's shape drawings, dash layouts and content boxes; its connector router, line ends and where along a connector a label sits |
+| `drawings.py`, `graphics_probe.js` | The editor's drawings as data; reading the artwork of a board's icons from the editor |
 | `canvas.py`, `svg.py`, `html.py` | Renderers |
 | `deploy.py`, `storage.py` | Writes outputs, optionally into an Obsidian vault; where files go |
 | `reference.py`, `editor.py`, `geometry_probe.js` | The reference board's spec; pasting it into the editor and reading back what it draws |

@@ -38,7 +38,7 @@ from .board import (
 )
 from .connectors import ARROWHEAD_SCALE, ARROWHEADS, End, Route, end_stub, point_at, route, thickness
 from .palette import drawn
-from .shapes import DASH_PERIOD, DASH_SHARE, SHAPE_LINE_WIDTH, Section, dash_layout, drawing, fmt, kind_label, resolve
+from .shapes import DASH_PERIOD, DASH_SHARE, SHAPE_LINE_WIDTH, Section, dash_layout, drawing, fmt, inset_outline, kind_label, resolve
 
 log = logging.getLogger(__name__)
 
@@ -117,7 +117,8 @@ def svg_document(board: Board, shape_map: dict[int, int] | None = None) -> tuple
     boxes = layout(board, SVG_METRICS)
     bounds = _Bounds()
     placeholders: Counter[int] = Counter(
-        d.kind for n in board.nodes if n.kind is Kind.SHAPE and (d := drawing(n.shape_kind, 0, 0, 1, 1, smap)).placeholder
+        d.kind for n in board.nodes
+        if n.kind is Kind.SHAPE and (d := drawing(n.shape_kind, 0, 0, 1, 1, smap, board.drawings)).placeholder
     )
 
     # Nodes in source z-order (a section covers what came before it, as in
@@ -132,7 +133,7 @@ def svg_document(board: Board, shape_map: dict[int, int] | None = None) -> tuple
             bounds.box(*box)
         if node.kind is Kind.SECTION and (tab := section_tab(node, box)):
             bounds.box(*tab)
-        if markup := _render_node(node, box, smap):
+        if markup := _render_node(node, box, smap, board):
             node_parts.append(markup)
     edge_parts: list[str] = []
     label_parts: list[str] = []  # above every connector, as in the editor
@@ -238,9 +239,9 @@ _STYLE = (
 )
 
 
-def _render_node(node: Node, box: Box, smap: dict[int, int]) -> str:
+def _render_node(node: Node, box: Box, smap: dict[int, int], board: Board) -> str:
     if node.kind is Kind.SHAPE:
-        inner = _shape(node, box, smap)
+        inner = _shape(node, box, smap, board.drawings)
     elif node.kind is Kind.TEXT:
         inner = _free_text(node, box)
     elif node.kind is Kind.IMAGE and node.image:
@@ -256,7 +257,7 @@ def _render_node(node: Node, box: Box, smap: dict[int, int]) -> str:
                 f'font-size="{fmt(min(12.0, h / 3))}" fill="#626F86">image</text>'
             )
     elif node.kind is Kind.ICON:
-        inner = _icon(node, box)
+        inner = _icon(node, box, board.icons)
     elif node.kind is Kind.STICKY:
         inner = _sticky(node, box)
     elif node.kind is Kind.SECTION:
@@ -284,15 +285,15 @@ def _render_node(node: Node, box: Box, smap: dict[int, int]) -> str:
     )
 
 
-def _shape(node: Node, box: Box, smap: dict[int, int]) -> str:
+def _shape(node: Node, box: Box, smap: dict[int, int], drawings: dict[int, dict]) -> str:
     x, y, w, h = box
     if w <= 0 or h <= 0:
         return ""
-    shape = drawing(node.shape_kind, x, y, w, h, smap)
+    shape = drawing(node.shape_kind, x, y, w, h, smap, drawings)
     # The editor draws the outline inside the box: its outer edge is the box
-    # edge. The text area stays the whole box's.
-    i = OUTLINE_INSET
-    outline = drawing(node.shape_kind, x + i, y + i, max(w - 2 * i, 0.0), max(h - 2 * i, 0.0), smap)
+    # edge (but see inset_outline). The text area stays the whole box's.
+    i = OUTLINE_INSET if inset_outline(resolve(node.shape_kind, smap)) else 0.0
+    outline = drawing(node.shape_kind, x + i, y + i, max(w - 2 * i, 0.0), max(h - 2 * i, 0.0), smap, drawings)
     colours = {
         "fill": node.fill.hex if node.fill else "transparent",
         "stroke": _hex(node.stroke, DEFAULT_STROKE),
@@ -313,10 +314,11 @@ def _shape(node: Node, box: Box, smap: dict[int, int]) -> str:
 def _section(index: int, sec: Section, colours: dict[str, str], style: str) -> str:
     """A fill section as one path; a stroke section as one path per subpath,
     each with its own dash layout."""
-    colour = colours[sec.colour]
+    colour = colours.get(sec.colour, sec.colour)  # a role, or a colour of its own
     if sec.paint == "fill":
         rule = ' fill-rule="evenodd"' if sec.rule == "evenodd" else ""
-        return f'<path data-part="{index}" d="{sec.d}" fill="{colour}"{rule} stroke="none"/>'
+        alpha = f' fill-opacity="{fmt(sec.opacity)}"' if sec.opacity < 1 else ""
+        return f'<path data-part="{index}" d="{sec.d}" fill="{colour}"{rule}{alpha} stroke="none"/>'
     if colour == "transparent" or style == "none":
         return ""
     width = SHAPE_LINE_WIDTH
@@ -397,11 +399,16 @@ def _section_frame(node: Node, box: Box) -> str:
     return out
 
 
-def _icon(node: Node, box: Box) -> str:
-    """A library icon whose artwork is not available: a rounded square
-    naming the icon, with the element's own label below."""
+def _icon(node: Node, box: Box, icons: dict[str, str]) -> str:
+    """A library icon: its artwork (the SVG file read for the board), or,
+    if that is not available, a rounded square naming it; the element's
+    own label below."""
     x, y, w, h = box
     colour = _hex(node.stroke, DEFAULT_STROKE)
+    if node.icon_key and (href := icons.get(node.icon_key)):
+        out = (f'<image x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}" '
+               f'href="{_xml_escape(href)}" preserveAspectRatio="xMidYMin meet"/>')
+        return out + _icon_label(node, box)
     out = (
         f'<rect x="{fmt(x)}" y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}" rx="{fmt(min(w, h) * 0.15)}" '
         f'fill="#F7F8F9" stroke="{colour}" stroke-width="1.5" stroke-dasharray="4,3"/>'
@@ -410,6 +417,12 @@ def _icon(node: Node, box: Box) -> str:
         f'text-align:center"><div class="node-body va-middle">{_xml_escape(node.icon or "icon")}</div></div>'
         "</foreignObject>"
     )
+    return out + _icon_label(node, box)
+
+
+def _icon_label(node: Node, box: Box) -> str:
+    x, y, w, h = box
+    out = ""
     if node.html:
         out += (
             f'<foreignObject x="{fmt(x - w / 2)}" y="{fmt(y + h)}" width="{fmt(2 * w)}" height="{fmt(SVG_METRICS.line_h * 2)}" '

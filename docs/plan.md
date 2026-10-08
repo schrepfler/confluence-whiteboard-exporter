@@ -18,7 +18,8 @@ Checked board by board, side by side with the live editor:
 - Connectors: curved, straight and right-angled routes, bend handles,
   rounded bends, line ends, and labels on the line or to either side.
 - Images, including ones still loading when the board was copied.
-- Library icons (e.g. AWS) as named placeholders.
+- Icon shapes and library icons (AWS, Azure, GCP) drawn with their real
+  artwork, read from the editor per board; the repo carries none of it.
 - Stickies and sections, sized and drawn as the editor does; in JSON
   Canvas a coloured card and a group with the section's title.
 - The Confluence API token: a clear message when it is rejected.
@@ -27,8 +28,8 @@ Checked board by board, side by side with the live editor:
 
 - **Right-angled connectors without bend handles** take a simpler route
   than the editor's, which also steers around other shapes.
-- **Library icon artwork** (AWS and other collections) is not available;
-  icons are drawn as a tile with their name.
+- **Boards extracted before icon artwork was read** show icons as named
+  placeholders until they are extracted again.
 - **Images on connectors** whose picture cannot be downloaded are drawn as
   placeholders, with a warning.
 - **The font** is Atlassian Sans only where it is installed; elsewhere a
@@ -281,6 +282,25 @@ What the board showed that the code and the first scratch board did not:
 Also found on the way: path drift compared sampled points 2 apart, which
 could read 1.0 for identical lines; it now measures to the other line's
 segments, and rebuilding the board changes no existing cell.
+
+## Icons
+
+The shape picker's "more shapes" (the 21 icon shapes) and the library icons
+(AWS, Azure, GCP) were placeholders: their artwork is Atlassian's and the
+clouds', and the repo is public. Both are vector drawings in the editor,
+so the extractor now reads the ones a board uses into its dump:
+
+- Icon shapes: from the editor's shape registry, the same drawing form as
+  `shape_data.json`, kept in the dump's `drawings`.
+- Library icons: from each collection's module, which maps an icon to its
+  drawing and to its original SVG file on the site; the SVG goes into the
+  board's `media/`, recorded in the dump's `icons`.
+
+`reference snapshot` caches all of them outside the repo, and the report
+draws the icon cells with it: 244 pass, 1 warn (list bullets), none known.
+Comparing them showed one more rule: the icons, and the actor, are drawn
+without the half-line-width inset the editor gives every other kind's
+outline.
 
 ## Later
 

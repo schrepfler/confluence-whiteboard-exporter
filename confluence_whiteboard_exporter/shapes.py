@@ -97,6 +97,15 @@ def is_icon(kind: int) -> bool:
     return bool(_kinds().get(kind, {}).get("icon"))
 
 
+def inset_outline(kind: int) -> bool:
+    """Whether the editor draws the kind's outline inside its box (half the
+    line width in from the edge), as it does every kind but the icons, whose
+    drawings leave room of their own, and the actor (measured on the
+    reference board)."""
+    spec = _kinds().get(kind, {})
+    return spec.get("category") != "advanced" and spec.get("key") != "actor"
+
+
 def can_draw(kind: int) -> bool:
     """Whether `kind` has a drawing of its own (or reuses one)."""
     return "fills" in _kinds().get(resolve(kind), {})
@@ -129,10 +138,11 @@ class Subpath:
 @dataclass(frozen=True)
 class Section:
     paint: str  # "fill" or "stroke": how the section is drawn
-    colour: str  # "fill" or "stroke": which of the shape's colours it uses
+    colour: str  # "fill" or "stroke": which of the shape's colours it uses; or a colour of its own, "#RRGGBB"
     subpaths: tuple[Subpath, ...]
     rule: str = "nonzero"
     dash_mode: str = "runs"  # how dashes are laid out: see dash_mode()
+    opacity: float = 1.0
 
     @property
     def d(self) -> str:
@@ -148,10 +158,12 @@ class Drawing:
     placeholder: bool = False  # no drawing available: an icon, or an unknown kind
 
 
-def drawing(kind: int | None, x: float, y: float, w: float, h: float, shape_map: dict[int, int] | None = None) -> Drawing:
-    """How to draw a shape of `kind` in the box (x, y, w, h)."""
+def drawing(kind: int | None, x: float, y: float, w: float, h: float, shape_map: dict[int, int] | None = None,
+            extra: dict[int, dict[str, Any]] | None = None) -> Drawing:
+    """How to draw a shape of `kind` in the box (x, y, w, h). `extra` holds
+    drawings read for a board (an icon kind's artwork), which come first."""
     k = resolve(kind, shape_map)
-    spec = _kinds().get(k)
+    spec = (extra or {}).get(k) or _kinds().get(k)
     box = (x, y, w, h)
     if spec is None:  # a kind this version does not know
         return Drawing(k, sections(SHARP_RECTANGLE, *box), box, box, placeholder=True)
@@ -171,9 +183,9 @@ def drawing(kind: int | None, x: float, y: float, w: float, h: float, shape_map:
         (left, top), (right, bottom) = (_point(p, *graphic) for p in spec["text"])
         text = (left, top, right - left, bottom - top)
 
-    if spec.get("icon"):
+    if "fills" not in spec:  # an icon whose artwork was not read
         return Drawing(k, sections(PLACEHOLDER_KIND, *graphic), graphic, text, placeholder=True)
-    return Drawing(k, sections(k, *graphic), graphic, text)
+    return Drawing(k, sections(k, *graphic, spec=spec), graphic, text)
 
 
 # The editor's basic shapes keep their text in a content box of their own
@@ -258,16 +270,19 @@ def text_area(kind: int | None, w: float, shape_map: dict[int, int] | None = Non
     return TextArea(w, 0.0, 0.0, 1.0, 0.0)
 
 
-def sections(kind: int, x: float, y: float, w: float, h: float) -> tuple[Section, ...]:
-    spec = _kinds()[kind]
+def sections(kind: int, x: float, y: float, w: float, h: float, spec: dict[str, Any] | None = None) -> tuple[Section, ...]:
+    """A drawing's sections in the box: `spec` (default: the kind's own),
+    fills first. A section is painted with one of the element's colours,
+    or with a colour of its own (library icons)."""
+    spec = spec if spec is not None else _kinds()[kind]
     mode = dash_mode(kind)
     out = []
     for paint in ("fill", "stroke"):
         for sec in spec.get(f"{paint}s", ()):
             other = "stroke" if paint == "fill" else "fill"
-            colour = other if sec.get("paint") == other else paint
+            colour = sec.get("colour") or (other if sec.get("paint") == other else paint)
             subs = tuple(subpaths(sec["path"], x, y, w, h, mode))
-            out.append(Section(paint, colour, subs, sec.get("rule", "nonzero"), mode))
+            out.append(Section(paint, colour, subs, sec.get("rule", "nonzero"), mode, sec.get("opacity", 1.0)))
     return tuple(out)
 
 

@@ -7,8 +7,9 @@ the image `confluence-whiteboard-exporter reference snapshot` took of the
 live canvas. Pass or fail comes from the geometry (compare.py); the pixels
 are for people: a score, the share of drawn pixels that differ, and an
 overlay marking them, so a difference can be seen before it is measured.
-Cells we draw as placeholders on purpose (icon artwork we do not have) are
-marked known rather than warned about.
+Icons are drawn with the artwork `reference snapshot` read from the editor
+and keeps outside the repo; without it they are placeholders, marked known
+rather than warned about.
 """
 
 from __future__ import annotations
@@ -16,11 +17,12 @@ from __future__ import annotations
 import base64
 import html
 import io
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .board import from_dump
+from .board import from_dump, icon_key
 from .compare import CellResult, compare
 from .model import ClipboardElement, DumpFile
 from .reference import CELL_H, Cell, Json, cell_rects, cell_slug, payload
@@ -46,11 +48,12 @@ class Row:
     note: str | None = None  # why the pixels differ, when it is known
 
 
-def build(cells: list[Cell], golden: Json, image_dir: Path, font: Path | None = None) -> list[Row]:
+def build(cells: list[Cell], golden: Json, image_dir: Path, font: Path | None = None,
+          artwork: Json | None = None) -> list[Row]:
     from PIL import Image
 
-    ours = render_cells(cells, font)
-    notes = {c.name: placeholder(c) for c in cells}
+    ours = render_cells(cells, font, artwork)
+    notes = {c.name: placeholder(c, artwork) for c in cells}
     rows = []
     for result in compare(cells, golden):
         editor_path = image_dir / f"{cell_slug(result.name)}.png"
@@ -71,25 +74,40 @@ def build(cells: list[Cell], golden: Json, image_dir: Path, font: Path | None = 
     return rows
 
 
-def placeholder(cell: Cell) -> str | None:
-    """Why the cell is drawn as a placeholder on purpose, or None."""
+def placeholder(cell: Cell, artwork: Json | None = None) -> str | None:
+    """Why the cell is drawn as a placeholder, or None: its icon artwork
+    is not in `artwork` (see load_artwork)."""
+    artwork = artwork or {}
     for e in cell.elements:
-        if e["type"] == "advanced-icon":
-            return "a library icon: its artwork is not available, so a named tile stands in"
-        if e["type"] == "shape" and is_icon(e["shape"]):
-            return "an icon shape: the editor's icon artwork is not included, so a tile stands in"
+        if e["type"] == "advanced-icon" and icon_key(e["collection"], e["category"], e["iconId"]) not in artwork.get("icons", {}):
+            return "a library icon whose artwork was not read: a named tile stands in (run reference snapshot)"
+        if e["type"] == "shape" and is_icon(e["shape"]) and str(e["shape"]) not in artwork.get("drawings", {}):
+            return "an icon shape whose artwork was not read: a tile stands in (run reference snapshot)"
     return None
 
 
-def render_cells(cells: list[Cell], font: Path | None = None) -> dict[str, object]:
-    """Our export of each cell, one pixel per board unit."""
+def load_artwork() -> Json | None:
+    """The icon artwork `reference snapshot` read from the editor, if any."""
+    from .storage import artwork_cache_path
+
+    path = artwork_cache_path()
+    return json.loads(path.read_text()) if path.exists() else None
+
+
+def render_cells(cells: list[Cell], font: Path | None = None, artwork: Json | None = None) -> dict[str, object]:
+    """Our export of each cell, one pixel per board unit, its icons drawn
+    with `artwork` where it has them."""
     from PIL import Image
     from playwright.sync_api import sync_playwright
 
     elements = payload(cells)
+    artwork = artwork or {}
+    icons = {key: "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+             for key, svg in artwork.get("icons", {}).items()}
     board = from_dump(DumpFile.model_validate(
         {"board": {"boardId": "reference", "title": "reference", "spaceKey": "REF"},
-         "strategy": "clipboard", "elements": [ClipboardElement.model_validate(e) for e in elements]}))
+         "strategy": "clipboard", "elements": [ClipboardElement.model_validate(e) for e in elements],
+         "drawings": artwork.get("drawings", {}), "icons": icons}))
     svg = render_svg(board)
     face = ""
     if font is not None and font.exists():

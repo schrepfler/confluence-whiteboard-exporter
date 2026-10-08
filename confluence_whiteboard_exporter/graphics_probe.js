@@ -1,0 +1,122 @@
+// Read the artwork a board's icons are drawn with, from the editor itself.
+//
+// Injected into the board's frame by extract.py. Read-only. The icon shapes
+// (cloud, key, server, ...) and the library icons (AWS, Azure, GCP) are
+// Atlassian's and the clouds' artwork, which the repo does not carry: the
+// extractor reads what a board uses into its own dump instead.
+//
+//   shapeDrawings(kinds)  -> {kind: definition with its drawing}, as
+//                            drawings.kind_entry reads it (the same form as
+//                            scripts/dump_shapes.js)
+//   libraryIcons(icons)   -> {"collection/category/iconId": SVG text}
+//
+// Modules and exports are found by shape, not name: the bundle's export
+// names change with every deploy.
+(() => {
+  if (globalThis.__whiteboardExporterGraphics) return;
+
+  function moduleUrls() {
+    return [...new Set([
+      ...[...document.querySelectorAll('script[type=module][src]')].map((s) => s.src),
+      ...[...document.querySelectorAll('link[rel=modulepreload][href]')].map((l) => l.href),
+      ...performance.getEntriesByType('resource').map((e) => e.name),
+    ])].filter((u) => /\.js($|\?)/.test(u));
+  }
+
+  let registry = null;
+  async function shapeRegistry() {
+    if (registry) return registry;
+    for (const url of moduleUrls()) {
+      let mod;
+      try { mod = await import(url); } catch (_e) { continue; }
+      for (const value of Object.values(mod)) {
+        const first = value && typeof value === 'object' ? value[0] : null;
+        if (first && typeof first === 'object' && first.rendererType && value[13] && value[13].key === 'database') {
+          registry = value;
+          return registry;
+        }
+      }
+    }
+    throw new Error("the editor's shape definitions were not found");
+  }
+
+  const r = (v) => Math.round(v * 1e4) / 1e4;
+  const point = (p) => [r(p.xPos()), r(p.yPos()), r(p.xOffset()), r(p.yOffset())];
+  const segment = (s) => {
+    switch (s.constructor.name) {
+      case 'GraphicLine': return ['L', point(s.start), point(s.end)];
+      case 'GraphicSubPathStart': return ['M', point(s.start)];
+      case 'GraphicCubicBezier': return ['C', point(s.start), point(s.control1 ?? s.cp1), point(s.control2 ?? s.cp2), point(s.end)];
+      default: throw new Error('unknown segment ' + s.constructor.name);
+    }
+  };
+  // A colour role (the element's fill or outline colour), or a colour of its own.
+  const colour = (c) => {
+    if (!c) return null;
+    if (c.color && c.color.length >= 3) return { kind: 'Solid', rgba: Array.from(c.color) };
+    return { kind: c.constructor.name.replace('Graphic', '').replace('Color', '') };
+  };
+  const section = (sec) => ({ color: colour(sec.color), rule: sec.fillRule ?? null, segs: [...sec.segments].map(segment) });
+  const probe = (fit) => {
+    if (typeof fit !== 'function') return null;
+    const out = { left: 0, top: 0, right: 0, bottom: 0 };
+    fit(out, { left: 0, top: 0, right: 200, bottom: 300 }, { strokeThickness: undefined });
+    return [out.left, out.top, out.right, out.bottom].map(r);
+  };
+
+  async function shapeDrawings(kinds) {
+    const reg = await shapeRegistry();
+    const out = {};
+    for (const kind of kinds) {
+      const def = reg[kind];
+      const graphic = def && (def.graphic || def.graphicForSvgRendering);
+      if (!graphic) continue;
+      out[kind] = {
+        key: def.key, cat: def.category || null, renderer: def.rendererType,
+        replicates: def.replicatedShape ?? null, exterior: def.exteriorTextArea || null,
+        noText: !!def.textDisabled, fit: probe(def.boundingBoxToRenderBox),
+        natural: [graphic.naturalSize[0], graphic.naturalSize[1]],
+        fills: graphic.fills.map(section), strokes: graphic.strokes.map(section),
+        text: graphic.textArea ? [point(graphic.textArea.topLeft), point(graphic.textArea.bottomRight)] : null,
+      };
+    }
+    return out;
+  }
+
+  // A collection's module maps each category's icons to {svg, graphic, ...};
+  // `svg` is the icon's own SVG file on the site. The module is loaded once
+  // an icon of it is drawn; otherwise it is found where other modules name it.
+  async function collectionModule(collection) {
+    const own = new RegExp(`/${collection}-[A-Za-z0-9_-]+\\.js($|\\?)`);
+    let url = moduleUrls().find((u) => own.test(u));
+    if (!url) {
+      const named = new RegExp(`["'\`]\\./(${collection}-[A-Za-z0-9_-]+\\.js)["'\`]`);
+      for (const u of moduleUrls()) {
+        let text;
+        try { text = await (await fetch(u)).text(); } catch (_e) { continue; }
+        const m = named.exec(text);
+        if (m) { url = new URL(m[1], u).href; break; }
+      }
+    }
+    if (!url) return null;
+    const mod = await import(url);
+    return mod[collection] ?? Object.values(mod).find((v) => v && typeof v === 'object');
+  }
+
+  async function libraryIcons(icons) {
+    const out = {};
+    const collections = {};
+    for (const { collection, category, iconId } of icons) {
+      try {
+        if (!(collection in collections)) collections[collection] = await collectionModule(collection);
+        const item = collections[collection]?.[category]?.items?.get(iconId);
+        if (!item || !item.svg) continue;
+        const res = await fetch(new URL(item.svg, location.href).href);
+        if (res.ok) out[`${collection}/${category}/${iconId}`] = await res.text();
+      } catch (_e) { /* left as a placeholder */ }
+    }
+    return out;
+  }
+
+  globalThis.__whiteboardExporterGraphics = { shapeDrawings, libraryIcons };
+})();

@@ -23,7 +23,9 @@ from playwright.async_api import (
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
+from .drawings import kind_entry
 from .model import BoardMeta, ClipboardElement, DumpFile, FiberDump
+from .shapes import is_icon
 from .storage import atomic_write_text, chrome_profile_dir, dump_path, ensure_dir, media_dir
 
 
@@ -42,6 +44,7 @@ COPY_RETRIES = 4  # the copy leaves out images that have not loaded yet
 FRAME_PATH_FRAGMENT = "/whiteboards/whiteboard/"
 
 _PROBE_JS = (Path(__file__).parent / "fiber_probe.js").read_text()
+GRAPHICS_PROBE = (Path(__file__).parent / "graphics_probe.js").read_text()
 
 
 _MIME_EXT = {
@@ -220,6 +223,8 @@ class Extractor:
             )
             await _wait_for_doc_populated(frame, timeout_ms=10_000)
             strategy, elements, fiber_dump = await self._capture(page, frame)
+            drawings, icons = await read_artwork(frame, elements, fiber_dump,
+                                                 target_media if self.download_media else None)
             images = _image_files(elements, fiber_dump)
             wanted = set(images)
             if self.download_media:
@@ -246,6 +251,8 @@ class Extractor:
             elements=elements,
             fiber_dump=fiber_dump,
             media=media_map,
+            drawings=drawings,
+            icons=icons,
         )
         atomic_write_text(target_dump, json.dumps(dump.model_dump(exclude_none=True), indent=2))
         return dump
@@ -423,6 +430,41 @@ async def _capture_media(
         (target_dir.parent / previous).unlink(missing_ok=True)
     media_map[uuid] = f"media/{uuid}{ext}"
     kinds[uuid] = kind
+
+
+async def read_artwork(frame: Frame, elements: list[ClipboardElement], fiber_dump: FiberDump | None,
+                       target_media: Path | None) -> tuple[dict[str, dict], dict[str, str]]:
+    """The artwork of the board's icons, read from the editor: the icon
+    shapes' drawings, by kind, and the library icons' SVG files, saved in
+    `target_media` (none without it), by icon key. What cannot be read is
+    left out, and drawn as a placeholder."""
+    kinds = {e.shape for e in elements if e.type == "shape" and isinstance(e.shape, int) and is_icon(e.shape)}
+    if fiber_dump is not None:
+        kinds |= {v["sh"] for v in fiber_dump.board.values()
+                  if isinstance(v, dict) and v.get("t") == "shape" and isinstance(v.get("sh"), int) and is_icon(v["sh"])}
+    wanted = {(e.collection, e.category, e.iconId) for e in elements
+              if e.type == "advanced-icon" and e.collection and e.category and e.iconId}
+    drawings: dict[str, dict] = {}
+    icons: dict[str, str] = {}
+    if not kinds and not (wanted and target_media):
+        return drawings, icons
+    try:
+        await frame.evaluate(GRAPHICS_PROBE)
+        if kinds:
+            read = await frame.evaluate("(k) => globalThis.__whiteboardExporterGraphics.shapeDrawings(k)", sorted(kinds))
+            drawings = {str(k): kind_entry(rec) for k, rec in read.items()}
+        if wanted and target_media:
+            svgs = await frame.evaluate(
+                "(i) => globalThis.__whiteboardExporterGraphics.libraryIcons(i)",
+                [{"collection": c, "category": g, "iconId": i} for c, g, i in sorted(wanted)])
+            ensure_dir(target_media)
+            for key, svg in svgs.items():
+                name = "icon-" + re.sub(r"[^A-Za-z0-9._-]+", "-", key.replace("/", "-")) + ".svg"
+                (target_media / name).write_text(svg)
+                icons[key] = f"media/{name}"
+    except PlaywrightError as e:
+        log.warning("icon artwork could not be read (%s); icons are drawn as placeholders", e)
+    return drawings, icons
 
 
 def _image_files(elements: list[ClipboardElement], fiber_dump: FiberDump | None) -> dict[str, str]:
