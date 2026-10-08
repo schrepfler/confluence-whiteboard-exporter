@@ -369,6 +369,14 @@ their own. To refresh the data after an editor update:
    JSON dump.
 2. Run `pbpaste | uv run scripts/build_shape_data.py`.
 
+The shape picker ("more shapes") offers 88 of the 89 kinds: basic (8),
+flowchart (24), advanced (21, the icons) and UML (35). Kind 0,
+`sharp-rectangle`, is in no section, though boards can hold it. The picker
+also has connectors, stickers (a separate element type), the four icon
+collections below and, as an experiment, Rovo diagram generation. The
+Atlassian collection shows only where the `atlassianArchitectureIcons`
+flag is on; the others always do.
+
 **Library icons** (`advanced-icon`) come from four collections: `atlassian`
 (26 icons in 6 categories), `aws` (814 in 27), `azure` (682 in 29) and
 `gcp` (215 in 14), all of which the extractor reads. They come from collection
