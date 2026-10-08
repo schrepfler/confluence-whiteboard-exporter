@@ -24,7 +24,7 @@ from .board import CAPS, from_dump, stable_ids
 from .connectors import end_stub
 from .model import ClipboardElement, DumpFile
 from .reference import Cell, Json, payload, placements
-from .svg import render_svg
+from .svg import svg_document
 
 Point = tuple[float, float]
 STEP = 2.0  # sampling distance along paths, in board units
@@ -56,8 +56,8 @@ def compare(cells: list[Cell], golden: Json) -> list[CellResult]:
     ids = stable_ids(clip)
     board = from_dump(DumpFile.model_validate(
         {"board": {"boardId": "reference", "title": "reference", "spaceKey": "REF"},
-         "strategy": "clipboard", "elements": clip}))
-    svg = render_svg(board)
+         "strategy": "clipboard", "elements": clip}), report=False)
+    svg, _ = svg_document(board)  # for its geometry: no warnings about how icons look
     boxes = {m["id"]: tuple(float(m[k]) for k in ("x", "y", "w", "h")) for m in _node_boxes(svg)}
     boxes |= _label_boxes(svg)
     paths = dict(re.findall(r'<path class="wb-edge" data-id="([^"]+)"[^>]*?\sd="([^"]+)"', svg))

@@ -224,7 +224,9 @@ def load_board(dump_path: Path) -> Board:
     return from_dump(DumpFile.model_validate_json(dump_path.read_text()))
 
 
-def from_dump(dump: DumpFile) -> Board:
+def from_dump(dump: DumpFile, *, report: bool = True) -> Board:
+    """The board in a dump; what it holds that cannot be drawn is logged
+    once, unless `report` is off."""
     losses = _Losses()
     if dump.strategy == "fiber" and dump.fiber_dump is not None:
         nodes, edges = _from_fiber(dump.fiber_dump, dump.media, losses)
@@ -237,7 +239,8 @@ def from_dump(dump: DumpFile) -> Board:
         if e.target not in node_ids:
             e.target = None
     losses.icons = sum(1 for n in nodes if n.kind is Kind.ICON and n.icon_key not in dump.icons)
-    losses.report(dump.board.boardId)
+    if report:
+        losses.report(dump.board.boardId)
     drawings = {int(k): v for k, v in dump.drawings.items() if k.isdigit()}
     return Board(meta=dump.board, nodes=nodes, edges=edges, drawings=drawings, icons=dict(dump.icons))
 
