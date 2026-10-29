@@ -21,6 +21,7 @@ import struct
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from enum import StrEnum
 from functools import cache, cached_property
 from pathlib import Path
@@ -210,11 +211,56 @@ class Edge:
     stroke_size: int = 1  # 1 small, 2 medium, 3 large
 
 
+@dataclass(frozen=True)
+class Post:
+    """One comment in a thread."""
+
+    author: str | None = None
+    author_id: str | None = None
+    created: str | None = None  # ISO 8601, UTC
+    adf: str | None = None
+    avatar: str | None = None  # the author's picture, relative to the dump
+
+    @cached_property
+    def markdown(self) -> str:
+        return adf_to_markdown(self.adf) if self.adf else ""
+
+    @cached_property
+    def html(self) -> str:
+        return adf_to_html(self.adf) if self.adf else ""
+
+    @cached_property
+    def when(self) -> str:
+        """'29 Oct 2026, 12:46 UTC'."""
+        if not self.created:
+            return ""
+        try:
+            t = datetime.fromisoformat(self.created.replace("Z", "+00:00"))
+        except ValueError:
+            return self.created
+        return f"{t.day} {t:%b %Y, %H:%M} UTC"
+
+
+@dataclass(eq=False)
+class Comment:
+    """A comment thread's pin: its centre on the board, and the node it is
+    pinned to, which it moves with. Drawn over everything, as the editor
+    draws pins."""
+
+    id: str
+    x: float
+    y: float
+    parent: str | None = None
+    resolved: bool = False
+    posts: tuple[Post, ...] = ()
+
+
 @dataclass(eq=False)
 class Board:
     meta: BoardMeta
     nodes: list[Node]  # z-order, back to front
     edges: list[Edge]
+    comments: list[Comment] = field(default_factory=list)
     drawings: dict[int, dict[str, Any]] = field(default_factory=dict)  # icon shapes' artwork, by kind
     icons: dict[str, str] = field(default_factory=dict)  # library icons' SVG files, by icon_key
     stickers: dict[str, str] = field(default_factory=dict)  # stickers' images, by sprite
@@ -251,8 +297,16 @@ def from_dump(dump: DumpFile, *, report: bool = True) -> Board:
     if report:
         losses.report(dump.board.boardId)
     drawings = {int(k): v for k, v in dump.drawings.items() if k.isdigit()}
-    return Board(meta=dump.board, nodes=nodes, edges=edges, drawings=drawings, icons=dict(dump.icons),
-                 stickers=dict(dump.stickers), stamps=dict(dump.stamps))
+    ids = stable_ids(dump.elements) if dump.strategy == "clipboard" else []
+    comments = [Comment(
+        id=f"comment-{c.id}", x=c.x, y=c.y, resolved=c.resolved,
+        parent=p if (p := c.parentId if dump.strategy == "fiber" else _index_id(c.parentIndex, ids)) in node_ids
+        else None,
+        posts=tuple(Post(author=q.author, author_id=q.authorId, created=q.created, adf=q.body, avatar=q.avatar)
+                    for q in c.posts),
+    ) for c in dump.comments]
+    return Board(meta=dump.board, nodes=nodes, edges=edges, comments=comments, drawings=drawings,
+                 icons=dict(dump.icons), stickers=dict(dump.stickers), stamps=dict(dump.stamps))
 
 
 @dataclass
@@ -686,7 +740,7 @@ def _from_fiber(fd: FiberDump, media: dict[str, str], losses: _Losses) -> tuple[
             fid = str(raw["fi"])
             nodes.append(Node(id=eid, kind=Kind.IMAGE, x=x, y=y, w=w, h=h,
                               image=_image(fid, media, losses)))
-        else:
+        elif t != "comment":  # comment pins: read with their threads, into the dump's comments
             # Includes paths: their points live outside `board` and are not captured.
             losses.elements[str(t)] += 1
     _attach_waypoints(edges, bends, losses)

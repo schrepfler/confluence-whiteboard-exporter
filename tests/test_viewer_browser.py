@@ -6,6 +6,7 @@ suite does not depend on Playwright's own, purgeable, browser download).
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -272,4 +273,61 @@ def test_a_stamp_moves_with_the_element_it_was_put_on(browser, tmp_path: Path) -
     after = on.bounding_box()
     assert (after["x"], after["y"]) == pytest.approx((before["x"] + 80, before["y"] + 40), abs=2)
     assert off.bounding_box() == loose_before, "a stamp on nothing stays put"
+    assert errors == []
+
+
+def _commented_board():
+    from confluence_whiteboard_exporter.board import from_dump
+    from confluence_whiteboard_exporter.model import ClipboardElement, DumpFile
+
+    sticky = {"type": "sticky", "position": {"x": 0, "y": 0}, "size": {"x": 144, "y": 144}}
+    far = {**sticky, "position": {"x": 900, "y": 600}}
+    post = {"id": "1", "author": "Ada Lovelace", "created": "2026-10-29T12:46:08Z", "body": json.dumps(
+        {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Tralala"}]}]})}
+    return from_dump(DumpFile.model_validate({
+        "board": {"boardId": "1", "title": "t", "spaceKey": "S"}, "strategy": "clipboard",
+        "elements": [ClipboardElement.model_validate(e) for e in (sticky, far)],
+        "comments": [{"id": "on", "x": 60, "y": -60, "parentIndex": 0, "posts": [post]},
+                     {"id": "free", "x": 400, "y": 300, "resolved": True, "posts": [post]}]}), report=False)
+
+
+def _centre(locator) -> tuple[float, float]:
+    box = locator.bounding_box()
+    return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+
+
+def test_a_pin_opens_its_thread_and_moves_with_its_element(browser, tmp_path: Path) -> None:
+    board = _commented_board()
+    page, errors = _open(browser, tmp_path, render_interactive_svg(board), "board.svg")
+    pin = page.locator('g.wb-comment[data-id="comment-on"] g.wb-pin > g').first
+    card = page.locator('g.wb-comment[data-id="comment-on"] foreignObject.wb-thread')
+    assert pin.bounding_box()["width"] == pytest.approx(32, abs=1), "a pin is 32 px across on screen"
+
+    page.mouse.click(*_centre(pin))
+    assert card.get_attribute("display") is None and "Tralala" in card.locator("div.wb-thread-card").inner_text()
+    page.mouse.click(5, 5)  # a click on the board closes it
+    assert card.get_attribute("display") == "none"
+
+    before = _centre(pin)
+    sx, sy = _centre(page.locator(f'g.wb-node[data-id="{board.nodes[0].id}"]'))
+    page.mouse.move(sx, sy)
+    page.mouse.down()
+    page.mouse.move(sx + 60, sy + 30, steps=5)
+    page.mouse.up()
+    after = _centre(pin)
+    assert (after[0] - before[0], after[1] - before[1]) == (pytest.approx(60, abs=2), pytest.approx(30, abs=2))
+    assert card.get_attribute("display") == "none", "dragging is not a click"
+
+    free = page.locator('g.wb-comment[data-id="comment-free"] g.wb-pin > g').first
+    fx, fy = _centre(free)
+    page.mouse.move(fx, fy)
+    page.mouse.down()
+    page.mouse.move(fx - 40, fy + 20, steps=5)
+    page.mouse.up()
+    assert _centre(free) == (pytest.approx(fx - 40, abs=2), pytest.approx(fy + 20, abs=2))
+    assert _centre(pin) == (pytest.approx(after[0], abs=1), pytest.approx(after[1], abs=1)), "the other pin stays"
+
+    for _ in range(5):
+        page.mouse.wheel(0, -100)
+    assert pin.bounding_box()["width"] == pytest.approx(32, abs=1), "the same size at any zoom"
     assert errors == []

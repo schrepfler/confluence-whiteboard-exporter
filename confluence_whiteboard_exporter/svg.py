@@ -9,6 +9,7 @@ SVG file, so it must sit next to `media/`.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 from collections import Counter
@@ -26,6 +27,7 @@ from .board import (
     SVG_METRICS,
     Board,
     Box,
+    Comment,
     Edge,
     Kind,
     Label,
@@ -142,6 +144,10 @@ def svg_document(board: Board, shape_map: dict[int, int] | None = None) -> tuple
         edge_parts.append(line)
         label_parts.extend(labels)
     caps = {(c, e.stroke_size) for e in board.edges for c in (e.start_cap, e.end_cap) if c in ARROWHEADS}
+    pin = pin_size(bounds, board.comments)
+    for c in board.comments:
+        bounds.box(c.x - pin / 2, c.y - pin / 2, pin, pin)
+    pin_parts = [_comment_pin(c, pin) for c in board.comments]
 
     if bounds.empty:
         empty = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"></svg>'
@@ -161,10 +167,113 @@ def svg_document(board: Board, shape_map: dict[int, int] | None = None) -> tuple
             *node_parts,
             *edge_parts,
             *label_parts,
+            *([_PIN_STYLE] if pin_parts else []),
+            *pin_parts,
             "</svg>",
         ]
     )
     return svg, placeholders
+
+
+# ------------------------------------------------------------ comment pins
+
+# The editor draws a pin the same size on screen at every zoom: its author's
+# picture (or initials) in a ring, about 32 px across. Here it is drawn to be that
+# size when the board fills a window about 1600 by 1000; the viewer keeps
+# it that size as it zooms. Its thread is its tooltip, and a card the
+# viewer opens.
+PIN = 32.0
+PIN_SCREEN = 32.0
+_PIN_VIEW = (1600.0, 1000.0)
+_PIN_RING, _PIN_RESOLVED = "#1868DB", "#8590A2"
+_PIN_COLOURS = ("#1868DB", "#E06C00", "#6E5DC6", "#1F845A", "#C9372C", "#0B6BA0", "#AE4787")
+_THREAD_W = 280.0
+_CARD_ROOM = 12.0  # round the card, for its shadow
+_PIN_STYLE = (
+    '<defs><clipPath id="wb-pin-face"><circle r="13"/></clipPath></defs>'
+    "<style>"
+    "g.wb-comment{cursor:pointer;}"
+    f".wb-thread-room{{padding:2px {fmt(_CARD_ROOM)}px {fmt(_CARD_ROOM)}px 2px;}}"
+    ".wb-thread-card{box-sizing:border-box;width:100%;padding:8px 10px;background:#fff;border-radius:6px;"
+    f"box-shadow:0 4px 12px rgba(30,31,33,.25);font-size:12px;line-height:1.35;color:{DEFAULT_STROKE};}}"
+    ".wb-thread-state{font-weight:600;color:#216E4E;margin-bottom:6px;}"
+    ".wb-post+.wb-post{border-top:1px solid #DCDFE4;margin-top:6px;padding-top:6px;}"
+    ".wb-post-head{color:#626F86;margin-bottom:2px;}.wb-post-head b{color:#172B4D;font-weight:600;}"
+    ".wb-post-body p{margin:0;}"
+    "</style>"
+)
+
+
+def pin_size(bounds: _Bounds, comments: list[Comment]) -> float:
+    """How large to draw comment pins on a board this size."""
+    if not comments or bounds.empty:
+        return PIN
+    fit = max((bounds.x1 - bounds.x0 + 2 * MARGIN) / _PIN_VIEW[0], (bounds.y1 - bounds.y0 + 2 * MARGIN) / _PIN_VIEW[1])
+    return max(PIN, PIN_SCREEN * fit)
+
+
+def _comment_pin(c: Comment, size: float) -> str:
+    """A pin, centred on the origin of a 32 square scaled to `size`, with
+    its thread as a tooltip and as a hidden card beside it."""
+    first = c.posts[0] if c.posts else None
+    ring = _PIN_RESOLVED if c.resolved else _PIN_RING
+    if first and first.avatar:
+        face = (f'<image x="-13" y="-13" width="26" height="26" href="{_xml_escape(first.avatar)}" '
+                f'clip-path="url(#wb-pin-face)" preserveAspectRatio="xMidYMid slice"/>')
+    else:
+        initials = _initials(first.author if first else None)
+        face = (f'<circle r="13" fill="{_author_colour(first.author_id if first else None)}"/>'
+                f'<text text-anchor="middle" dominant-baseline="central" font-size="{12 if len(initials) < 2 else 10}" '
+                f'font-weight="600" fill="#fff">{_xml_escape(initials)}</text>')
+    badge = ('<g transform="translate(11 -11)"><circle r="6" fill="#22A06B" stroke="#fff" stroke-width="1.5"/>'
+             '<path d="M -2.5 0 L -0.6 2 L 2.6 -1.8" fill="none" stroke="#fff" stroke-width="1.5" '
+             'stroke-linecap="round" stroke-linejoin="round"/></g>') if c.resolved else ""
+    parent = f' data-parent="{_xml_escape(c.parent)}"' if c.parent else ""
+    state = ' data-resolved="true"' if c.resolved else ""
+    return (
+        f'<g class="wb-comment" data-id="{_xml_escape(c.id)}"{parent}{state} data-x="{fmt(c.x)}" data-y="{fmt(c.y)}" '
+        f'data-size="{fmt(size)}" transform="translate({fmt(c.x)} {fmt(c.y)})">'
+        f"<title>{_xml_escape(thread_text(c))}</title>"
+        f'<g class="wb-pin" transform="scale({fmt(size / PIN)})">'
+        f'<g opacity="{0.7 if c.resolved else 1}">'
+        f'<circle r="16" fill="{ring}" filter="url(#wb-sticky-shadow)"/><circle r="14.5" fill="#fff"/>{face}</g>'
+        f"{badge}"
+        f'<foreignObject class="wb-thread" x="20" y="-18" width="{fmt(_THREAD_W + 2 * _CARD_ROOM)}" height="40" '
+        'display="none"><div xmlns="http://www.w3.org/1999/xhtml" class="wb-thread-room">'
+        f'<div class="wb-thread-card">{_thread_html(c)}</div></div>'
+        "</foreignObject></g></g>"
+    )
+
+
+def thread_text(c: Comment) -> str:
+    """A thread as plain text, a post a paragraph: who, when, what."""
+    lines = ["Resolved"] if c.resolved else []
+    for post in c.posts:
+        head = ", ".join(x for x in (post.author or "Someone", post.when) if x)
+        lines.append(f"{head}: {post.markdown.strip()}")
+    return "\n\n".join(lines) or "Comment"
+
+
+def _thread_html(c: Comment) -> str:
+    parts = ['<div class="wb-thread-state">✓ Resolved</div>'] if c.resolved else []
+    for post in c.posts:
+        stamp = post.when
+        parts.append(
+            f'<div class="wb-post"><div class="wb-post-head"><b>{_xml_escape(post.author or "Someone")}</b>'
+            + (f" · {_xml_escape(stamp)}" if stamp else "")
+            + f'</div><div class="wb-post-body">{post.html}</div></div>'
+        )
+    return "".join(parts) or '<div class="wb-post">No text was read for this comment.</div>'
+
+
+def _initials(name: str | None) -> str:
+    words = [w for w in (name or "").split() if w[:1].isalnum()]
+    return "".join(w[0] for w in (words[:1] + words[1:][-1:])).upper() or "?"
+
+
+def _author_colour(author_id: str | None) -> str:
+    digest = hashlib.sha1((author_id or "").encode()).digest()
+    return _PIN_COLOURS[digest[0] % len(_PIN_COLOURS)]
 
 
 def _defs(caps: set[tuple[str, int]]) -> str:

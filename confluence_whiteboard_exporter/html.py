@@ -130,6 +130,20 @@ _VIEWER_JS = r"""
       var parent = nd.group.getAttribute('data-parent');
       if (parent && nodeMap.has(parent)) attached.set(parent, (attached.get(parent) || []).concat([id]));
     });
+    // Comment pins: dragged on their own and carried by what they are pinned
+    // to, the same size on screen at every zoom, as in the editor; a click
+    // opens or closes a pin's thread.
+    var pinList = [], pinsOn = new Map();
+    var pinEls = svg.querySelectorAll('g.wb-comment');
+    for (var q = 0; q < pinEls.length; q++) {
+      var pg = pinEls[q];
+      var pin = { group: pg, body: pg.querySelector('g.wb-pin'), card: pg.querySelector('foreignObject.wb-thread'),
+                  x: parseFloat(pg.getAttribute('data-x')), y: parseFloat(pg.getAttribute('data-y')), tx: 0, ty: 0 };
+      pinList.push(pin);
+      var pinParent = pg.getAttribute('data-parent');
+      if (pinParent && nodeMap.has(pinParent)) pinsOn.set(pinParent, (pinsOn.get(pinParent) || []).concat([pin]));
+      enablePinDrag(pin);
+    }
     var edgeEls = svg.querySelectorAll('path.wb-edge');
     for (var j = 0; j < edgeEls.length; j++) {
       var p = edgeEls[j];
@@ -380,6 +394,7 @@ _VIEWER_JS = r"""
           var r = nodeMap.get(id);
           return { node: r, tx: r.tx, ty: r.ty };
         });
+        var pinRiders = (pinsOn.get(idx) || []).map(function (p) { return { pin: p, tx: p.tx, ty: p.ty }; });
         var ctm = svg.getScreenCTM();
         var sx = ctm ? ctm.a : 1;
         var sy = ctm ? ctm.d : 1;
@@ -392,6 +407,11 @@ _VIEWER_JS = r"""
             r.node.ty = r.ty + (nd.ty - origTy);
             r.node.group.setAttribute('transform', 'translate(' + r.node.tx + ' ' + r.node.ty + ')');
           });
+          pinRiders.forEach(function (r) {
+            r.pin.tx = r.tx + (nd.tx - origTx);
+            r.pin.ty = r.ty + (nd.ty - origTy);
+            placePin(r.pin);
+          });
           redrawEdgesFor(idx);
         }
         function up() {
@@ -401,6 +421,51 @@ _VIEWER_JS = r"""
         window.addEventListener('mousemove', move);
         window.addEventListener('mouseup', up);
       });
+    }
+
+    function enablePinDrag(pin) {
+      pin.group.addEventListener('mousedown', function (e) {
+        if (e.button !== 0 || e.target.closest('foreignObject.wb-thread')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var startX = e.clientX, startY = e.clientY, origTx = pin.tx, origTy = pin.ty, moved = false;
+        var ctm = svg.getScreenCTM();
+        var sx = ctm ? ctm.a : 1, sy = ctm ? ctm.d : 1;
+        function move(ev) {
+          moved = moved || Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 3;
+          if (!moved) return;
+          pin.tx = origTx + (ev.clientX - startX) / sx;
+          pin.ty = origTy + (ev.clientY - startY) / sy;
+          placePin(pin);
+        }
+        function up() {
+          window.removeEventListener('mousemove', move);
+          window.removeEventListener('mouseup', up);
+          if (!moved) toggleThread(pin);
+        }
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
+      });
+    }
+    function placePin(pin) {
+      pin.group.setAttribute('transform', 'translate(' + (pin.x + pin.tx) + ' ' + (pin.y + pin.ty) + ')');
+    }
+    function sizePins() {
+      var ctm = svg.getScreenCTM();
+      var k = ctm && ctm.a ? 1 / ctm.a : 1;  // one pin unit to a screen pixel
+      pinList.forEach(function (p) { if (p.body) p.body.setAttribute('transform', 'scale(' + k + ')'); });
+    }
+    function toggleThread(pin) {
+      var open = pin.card && pin.card.getAttribute('display') !== 'none';
+      closeThreads();
+      if (!pin.card || open) return;
+      pin.group.parentNode.appendChild(pin.group);  // over the other pins
+      pin.card.removeAttribute('display');
+      var card = pin.card.firstElementChild;
+      if (card) pin.card.setAttribute('height', Math.max(card.scrollHeight, 20));
+    }
+    function closeThreads() {
+      pinList.forEach(function (p) { if (p.card) p.card.setAttribute('display', 'none'); });
     }
 
     function redrawAllEdges() {
@@ -671,20 +736,22 @@ _VIEWER_JS = r"""
       var view = { x: vb[0], y: vb[1], w: vb[2], h: vb[3] };
       var panning = null;
       svg.addEventListener('mousedown', function (e) {
-        if (e.target.closest('g.wb-node')) return;
+        if (e.target.closest('g.wb-node, g.wb-comment')) return;
         if (e.button !== 0) return;
-        panning = { startX: e.clientX, startY: e.clientY, vx: view.x, vy: view.y };
+        panning = { startX: e.clientX, startY: e.clientY, vx: view.x, vy: view.y, moved: false };
         svg.style.cursor = 'grabbing';
       });
       window.addEventListener('mousemove', function (e) {
         if (!panning) return;
         var ctm = svg.getScreenCTM();
         var sx = ctm ? ctm.a : 1, sy = ctm ? ctm.d : 1;
+        panning.moved = panning.moved || Math.abs(e.clientX - panning.startX) + Math.abs(e.clientY - panning.startY) > 3;
         view.x = panning.vx - (e.clientX - panning.startX) / sx;
         view.y = panning.vy - (e.clientY - panning.startY) / sy;
         applyView();
       });
       window.addEventListener('mouseup', function () {
+        if (panning && !panning.moved) closeThreads();  // a click on the board
         panning = null;
         svg.style.cursor = '';
       });
@@ -701,8 +768,11 @@ _VIEWER_JS = r"""
         view.w *= factor; view.h *= factor;
         applyView();
       }, { passive: false });
+      window.addEventListener('resize', sizePins);
+      sizePins();
       function applyView() {
         svg.setAttribute('viewBox', view.x + ' ' + view.y + ' ' + view.w + ' ' + view.h);
+        sizePins();
       }
     }
   }

@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .board import CANVAS_METRICS, Board, Kind, Node, Rgb, anchor_side, layout
+from .board import CANVAS_METRICS, Board, Comment, Kind, Node, Rgb, anchor_side, layout
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +90,7 @@ def render_canvas(
     # Sections are groups, listed first so they sit under what lies on them.
     ordered = sorted(board.nodes, key=lambda n: n.kind is not Kind.SECTION)
     nodes = [_node(n, boxes[n.id], vault_prefix, board) for n in ordered]
+    nodes += [_comment_card(c) for c in board.comments]
     dropped_caps: Counter[str] = Counter()
     edges: list[CanvasEdge] = []
     loose = 0
@@ -157,6 +158,24 @@ def _node(n: Node, box: tuple[float, float, float, float], vault_prefix: str, bo
                           color=_color(n.stroke))
     return CanvasNode(id=n.id, type="text", x=x, y=y, width=w, height=h,
                       color=_color(_identity_colour(n)), text=n.markdown)
+
+
+# A comment thread is a card beside where its pin is: open ones purple,
+# resolved ones green, as Obsidian's preset colours go.
+COMMENT_CARD_W = 300
+_OPEN, _RESOLVED = "6", "4"
+
+
+def _comment_card(c: Comment) -> CanvasNode:
+    parts = ["✅ **Resolved**"] if c.resolved else []
+    for post in c.posts:
+        head = f"**{post.author or 'Someone'}**" + (f" · {post.when}" if post.when else "")
+        parts.append(f"{head}\n{post.markdown.strip()}")
+    text = "💬 " + ("\n\n".join(parts) if parts else "*(no text was read for this comment)*")
+    lines = sum(1 + len(line) // 38 for line in text.splitlines())
+    return CanvasNode(id=c.id, type="text", x=int(round(c.x + 20)), y=int(round(c.y - 16)), width=COMMENT_CARD_W,
+                      height=int(CANVAS_METRICS.pad_h + lines * CANVAS_METRICS.line_h),
+                      color=_RESOLVED if c.resolved else _OPEN, text=text)
 
 
 def _identity_colour(n: Node) -> Rgb | None:

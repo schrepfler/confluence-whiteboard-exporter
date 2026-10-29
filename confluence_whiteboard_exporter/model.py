@@ -120,6 +120,32 @@ class FiberDump(BaseModel):
     meta: dict[str, Any] | None = None
 
 
+class CommentPost(BaseModel):
+    """One comment in a thread: the first, or a reply."""
+
+    id: str
+    author: str | None = None  # display name
+    authorId: str | None = None
+    created: str | None = None  # ISO 8601, UTC
+    body: str | None = None  # Atlassian Document Format, as JSON text
+    avatar: str | None = None  # the author's picture, relative to the dump, e.g. "media/avatar-<id>.png"
+
+
+class CommentPin(BaseModel):
+    """A comment thread pinned on the board: the pin's centre, in the
+    dump's frame, and what it is pinned to (by Yjs id in a fiber dump, by
+    index in a clipboard one), with the thread's posts, first one first."""
+
+    id: str
+    marker: str | None = None  # the thread's inline marker ref
+    x: float
+    y: float
+    parentId: str | None = None
+    parentIndex: int | None = None
+    resolved: bool = False
+    posts: list[CommentPost] = Field(default_factory=list)
+
+
 class DumpFile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -136,3 +162,4 @@ class DumpFile(BaseModel):
     icons: dict[str, str] = Field(default_factory=dict)
     stickers: dict[str, str] = Field(default_factory=dict)  # each sticker's image, by sticker id
     stamps: dict[str, str] = Field(default_factory=dict)  # each stamp's image, by stamp id
+    comments: list[CommentPin] = Field(default_factory=list)

@@ -185,7 +185,7 @@ Each element type declares which box it uses
 | `drawing` | YDrawing | Pen drawing | ❌ |
 | `composite-shape` | YCompositeShape | Multi-part shape (UML class, …) | ❌ |
 | `line` | YLine | Line | ❌ |
-| `comment` | YComment | Comment pin | ❌ |
+| `comment` | YComment | Comment pin; its thread is Confluence content | ✅ (Yjs only; thread read from the REST API) |
 | slide types | YSlide, YSlideChildElement, YSlideDecorationElement, YSlideChartElement | Presentation mode | ❌ |
 | `timer`, `timerV2`, voting session, `flags` | YTimer, YVotingSession, … | Collaboration tools | ❌ |
 
@@ -408,6 +408,23 @@ v1]`, texel centres with v up from the bottom, a 256-pixel square spread
 over the stamp's whole box. The extractor saves each stamp a board uses as
 that square, a PNG in its `media/`, or as its bare symbol if the atlas
 cannot be read. The HTML viewer moves a stamp with the element it is on.
+
+**Comment pins** (`comment`) are in the Yjs document only: the clipboard copy
+leaves them out. A pin is a 32 square (`s`) centred at `p`, with `ci` (its
+thread's inline marker ref), `cb` (who made it), `r` (resolved) and, when it
+was put on an element, `at: {parentId, offset}`, the pin's centre less the
+element's top-left corner, as for stamps. The editor draws a pin the same
+size on screen at every zoom (the author's picture in a blue ring) and hides
+resolved ones. The thread itself is Confluence content: inline comments on
+the whiteboard (`/rest/api/content/<board>/child/comment?depth=all`), whose
+`extensions.inlineProperties.markerRef` is the pin's `ci`; replies name
+their thread's first comment as their ancestor, and
+`extensions.resolution.status` is `open` or `resolved`. A clipboard copy is
+translated by a constant from the board's own frame (the offset every boxed
+element agrees on), and is not in z-order, so the extractor reads the pins
+from the Yjs document, moves them into the copy's frame and finds what each
+is pinned to there by type, place and size. It reads the threads with the
+browser's session and saves each author's picture to `media/`.
 
 **Library icons** (`advanced-icon`) come from four collections: `atlassian`
 (26 icons in 6 categories), `aws` (814 in 27), `azure` (682 in 29) and

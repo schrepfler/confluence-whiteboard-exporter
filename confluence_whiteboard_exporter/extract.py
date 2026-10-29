@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from playwright.async_api import (
+    APIRequestContext,
     Browser,
     BrowserContext,
     Frame,
@@ -25,8 +26,9 @@ from playwright.async_api import (
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
+from .comments import attach_threads, avatar_paths, read_pins
 from .drawings import kind_entry
-from .model import BoardMeta, ClipboardElement, DumpFile, FiberDump
+from .model import BoardMeta, ClipboardElement, CommentPin, DumpFile, FiberDump
 from .shapes import is_icon, known
 from .storage import atomic_write_text, chrome_profile_dir, dump_path, ensure_dir, media_dir
 
@@ -44,6 +46,9 @@ MEDIA_RE = re.compile(r"/file/([0-9a-f-]{36})/(binary|image)(?:[/?#]|$)")
 MEDIA_WAIT_S = 15.0  # how long to wait for the board's images after copying it
 COPY_RETRIES = 4  # the copy leaves out images that have not loaded yet
 FRAME_PATH_FRAGMENT = "/whiteboards/whiteboard/"
+# A whiteboard's comments, replies too, with what pins them and who wrote them.
+COMMENTS_URL = ("{base}/wiki/rest/api/content/{board}/child/comment?depth=all&limit=100"
+                "&expand=body.atlas_doc_format,history,extensions.inlineProperties,extensions.resolution,ancestors")
 
 _PROBE_JS = (Path(__file__).parent / "fiber_probe.js").read_text()
 GRAPHICS_PROBE = (Path(__file__).parent / "graphics_probe.js").read_text()
@@ -226,6 +231,8 @@ class Extractor:
             await _wait_for_doc_populated(frame, timeout_ms=10_000)
             strategy, elements, fiber_dump = await self._capture(page, frame)
             art = await read_artwork(frame, elements, fiber_dump, target_media if self.download_media else None)
+            comments = await self._read_comments(frame, board, elements if strategy == "clipboard" else None,
+                                                 fiber_dump, target_media if self.download_media else None)
             images = _image_files(elements, fiber_dump)
             wanted = set(images)
             if self.download_media:
@@ -256,9 +263,36 @@ class Extractor:
             icons=art.icons,
             stickers=art.stickers,
             stamps=art.stamps,
+            comments=comments,
         )
         atomic_write_text(target_dump, json.dumps(dump.model_dump(exclude_none=True), indent=2))
         return dump
+
+    async def _read_comments(
+        self, frame: Frame, board: BoardMeta, elements: list[ClipboardElement] | None,
+        fiber_dump: FiberDump | None, target_media: Path | None,
+    ) -> list[CommentPin]:
+        """The board's comment pins (from its Yjs document, which a clipboard
+        capture reads for them alone) with their threads, read with the
+        browser's session, and their authors' pictures saved to media/."""
+        assert self._context is not None
+        try:
+            pins = read_pins(fiber_dump or await _extract_via_fiber(frame), elements)
+        except (PlaywrightError, ValueError) as e:
+            log.warning("could not read the board's comment pins (%s); comments left out", e)
+            return []
+        if not pins:
+            return pins
+        request = self._context.request
+        try:
+            found = await _board_comments(request, self.base_url, board.contentId or board.boardId)
+        except (PlaywrightError, RuntimeError, ValueError) as e:
+            log.warning("could not read the board's comment threads (%s); pins drawn without text", e)
+            return pins
+        attach_threads(pins, found)
+        if target_media is not None:
+            await _save_avatars(request, self.base_url, pins, avatar_paths(found), target_media)
+        return pins
 
     async def _capture(
         self, page: Page, frame: Frame
@@ -395,6 +429,42 @@ async def _extract_via_clipboard(page: Page, frame: Frame) -> list[ClipboardElem
     if not isinstance(raw, list):
         raise RuntimeError(f"unexpected clipboard payload type: {type(raw).__name__}")
     return [ClipboardElement.model_validate(e) for e in raw]
+
+
+async def _board_comments(request: APIRequestContext, base_url: str, board_id: str) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    url: str | None = COMMENTS_URL.format(base=base_url, board=board_id)
+    while url:
+        r = await request.get(url, headers={"Accept": "application/json"})
+        if not r.ok:
+            raise RuntimeError(f"HTTP {r.status} from the comments API")
+        data = await r.json()
+        out.extend(data.get("results") or [])
+        nxt = (data.get("_links") or {}).get("next")
+        url = f"{base_url}/wiki{nxt}" if nxt else None
+    return out
+
+
+async def _save_avatars(request: APIRequestContext, base_url: str, pins: list[CommentPin],
+                        paths: dict[str, str], target_dir: Path) -> None:
+    """Save each author's picture once, and point their posts at it."""
+    saved: dict[str, str | None] = {}
+    for post in (post for pin in pins for post in pin.posts):
+        aid = post.authorId
+        if not aid or aid not in paths:
+            continue
+        if aid not in saved:
+            saved[aid] = None
+            try:
+                r = await request.get(f"{base_url}{paths[aid]}")
+                ext = _MIME_EXT.get((r.headers.get("content-type") or "").split(";")[0].strip().lower())
+                if r.ok and ext:
+                    name = f"avatar-{re.sub(r'[^A-Za-z0-9_-]', '-', aid)}{ext}"
+                    (target_dir / name).write_bytes(await r.body())
+                    saved[aid] = f"media/{name}"
+            except (PlaywrightError, OSError) as e:
+                log.warning("could not save a comment author's picture (%s)", e)
+        post.avatar = saved[aid]
 
 
 async def _extract_via_fiber(frame: Frame) -> FiberDump:

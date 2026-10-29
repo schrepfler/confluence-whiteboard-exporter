@@ -95,7 +95,7 @@ command has `--help`.
   are drawn plain, connectors with a loose end are left out, and dividers
   become thin cards. Stickies are cards in their colour, sections are groups
   named by their title, and library icons, stickers and stamps point at
-  their image files.
+  their image files. Each comment thread is a card beside where its pin is.
   `--collision-fix` nudges overlapping cards apart.
 - **svg**: a faithful replica. Shapes are drawn from the editor's own
   definitions and grown to fit their text as the editor grows them; text is
@@ -108,8 +108,14 @@ command has `--help`.
   not run and it is the static drawing. Pass `--static-svg` to leave the
   script out, for places that block SVG carrying script (some mail filters).
 - **html**: the same drawing with drag, pan and zoom; connectors, labels and
-  the stamps put on a shape follow the shapes you move. Open it in a
-  browser.
+  the stamps and comment pins put on a shape follow the shapes you move.
+  Open it in a browser.
+
+Comment pins are drawn where they are on the board, with their author's
+picture or initials, and resolved ones too, greyed and ticked (the editor
+hides those). A pin's thread is its tooltip; in the html viewer and the
+svg opened in a browser, a click opens it beside the pin, and pins can be
+dragged.
 
 Text is drawn in Atlassian Sans where it is installed; elsewhere a system
 font stands in, and line breaks can differ slightly. SVG and HTML reference
@@ -132,8 +138,8 @@ it is extracted again. Draw a kind as another with `--shape-map
 
 Free text, shapes, stickies, sections, stickers and stamps (their images
 read with the board, like the icons), connectors with their bends and
-labels, images and freehand lines (drawn straight, end to end) are
-supported. Tables, mind maps, cards, Jira issues and the other element
+labels, images, freehand lines (drawn straight, end to end) and comment
+threads are supported. Tables, mind maps, cards, Jira issues and the other element
 types are left out for now. Anything a format cannot show is reported as a warning
 rather than dropped silently. [docs/plan.md](docs/plan.md) lists what is
 still missing, such as the dark theme.
@@ -253,6 +259,7 @@ an editor update (icon artwork is never among them: it is read per board):
 | `extract.py` | `auth attach` login, and the `Extractor` browser session |
 | `fiber_probe.js` | Injected into the board page to capture its content |
 | `model.py` | Schema of the raw dump file |
+| `comments.py` | Comment pins from the board's Yjs document, placed on the clipboard copy, with their threads from the REST API |
 | `board.py` | Normalises either kind of dump into one `Board`; text layout, box sizes and stable ids |
 | `adf.py`, `palette.py` | Rich text (Atlassian Document Format) to HTML and Markdown; the editor's colours |
 | `shapes.py`, `connectors.py` | The editor's shape drawings, dash layouts and content boxes; its connector router, line ends and where along a connector a label sits |
