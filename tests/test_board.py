@@ -430,6 +430,21 @@ def test_a_sticky_is_sized_as_in_the_editor(size: float, scale: float, box: tupl
     assert node_box(node, SVG_METRICS) == pytest.approx(box)
 
 
+def test_a_scaled_sticky_is_scaled_once() -> None:
+    # As the editor stores a sticky scaled 3.54: its position is already the
+    # centre of the scaled box, 183.2 below its basis; the box is not taller.
+    (node,) = _clip(_sticky("How do we move within market bounds for non primary markets",
+                            fontScale=3.5443317890167236, position={"x": 0, "y": 183.1918945})).nodes
+    assert node_box(node, SVG_METRICS) == pytest.approx((-255.19, -72, 510.38, 510.38), abs=0.01)
+    fiber = {"board": {"K": {"t": "sticky", "c": [67, 127, 0, 0, 67, 94, 0, 0, 67, 56, 0, 0]}},
+             "dimensions": [{"key": "p#K", "val": [0, 183.1918945]}, {"key": "s#K", "val": [510.38, 510.38]},
+                            {"key": "bp#K", "val": [0, 0]}, {"key": "bs#K", "val": [144, 144]},
+                            {"key": "fs#K", "val": 3.5443317890167236}],
+             "zindex": ["K"]}
+    board = from_dump(DumpFile.model_validate({"board": META, "strategy": "fiber", "fiber_dump": fiber}))
+    assert node_box(board.node("K"), SVG_METRICS) == pytest.approx((-255.19, -72, 510.38, 510.38), abs=0.01)
+
+
 def test_a_section_is_never_smaller_than_160_about_its_centre() -> None:
     (node,) = _clip({"type": "section", "position": {"x": 0, "y": 0}, "size": {"x": 120, "y": 90},
                      "color": {"x": 200, "y": 244, "z": 249}, "title": "Small"}).nodes

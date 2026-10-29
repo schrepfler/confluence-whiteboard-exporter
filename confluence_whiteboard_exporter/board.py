@@ -408,7 +408,7 @@ def _clip_node(nid: str, e: ClipboardElement, media: dict[str, str], losses: _Lo
             adf=_fix_mojibake(e.text),
         )
     if e.type == "sticky" and e.position:
-        x, y, w, h = _shape_box(e)
+        x, y, w, h = _basis_box(e)
         return Node(
             id=nid, kind=Kind.STICKY, x=x, y=y, w=w, h=h,
             fill=Rgb.from_vector(e.color),
@@ -508,6 +508,18 @@ def _shape_box(e: ClipboardElement) -> Box:
     (bx, by), (bw, bh) = basis_centre, basis_size
     grow = 2 * (e.position.y - by) if adf_to_markdown(e.text).strip() else 0.0
     return bx - bw / 2, by - bh / 2, bw, bh + max(grow, 0.0)
+
+
+def _basis_box(e: ClipboardElement) -> Box:
+    """A sticky's box before the editor scaled it and grew it to fit its
+    text. Its `position` already counts both (scaling grows it down from its
+    top), so taking growth from it would scale it twice; the layout redoes
+    both from the basis."""
+    assert e.position is not None
+    basis_centre, basis_size = _xy(e.basisPosition), _xy(e.basisSize)
+    if basis_centre is None or not basis_size or basis_size[0] <= 0 or basis_size[1] <= 0:
+        return _drawn_box(e)
+    return _centred(*basis_centre, *basis_size)
 
 
 def _grown_box(centre: Point, size: Point | None, basis_centre: Point | None, basis_size: Point | None) -> Box:
@@ -656,6 +668,8 @@ def _from_fiber(fd: FiberDump, media: dict[str, str], losses: _Losses) -> tuple[
                               font_scale=_scale(_num(d.get("fs"), 1.0)),
                               auto_width=raw.get("fw") is not False))
         elif t == "sticky":
+            if (bs := _opt_pair(d.get("bs"))) and bs[0] > 0 and bs[1] > 0:  # scaled once, by the layout
+                x, y, w, h = _centred(*(_opt_pair(d.get("bp")) or _pair(d.get("p"))), *bs)
             nodes.append(Node(id=eid, kind=Kind.STICKY, x=x, y=y, w=w, h=h,
                               fill=Rgb.from_float32_be(raw.get("c")),
                               align=_FIBER_HALIGN.get(raw.get("a", 0), "center"),
