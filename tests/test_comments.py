@@ -123,7 +123,10 @@ def test_the_svg_draws_a_pin_with_its_thread() -> None:
     assert title.startswith("Resolved\n\nAda Lovelace, 29 Oct 2026, 12:46 UTC: Is <this> right?")
     assert "Alan Turing, 29 Oct 2026, 13:00 UTC: " in title
     assert ">AL</text>" in svg, "no picture: the author's initials"
-    assert 'display="none"' in svg and "Is &lt;this&gt; right?" in svg
+    thread = json.loads(pin.get("data-thread"))  # plain text the viewer's card is built from
+    assert thread == {"resolved": True, "posts": [
+        {"author": "Ada Lovelace", "when": "29 Oct 2026, 12:46 UTC", "text": "Is <this> right?"},
+        {"author": "Alan Turing", "when": "29 Oct 2026, 13:00 UTC", "text": ""}]}
 
 
 def test_a_canvas_gets_a_card_per_thread() -> None:

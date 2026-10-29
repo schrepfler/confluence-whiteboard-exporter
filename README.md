@@ -111,6 +111,22 @@ command has `--help`.
   the stamps and comment pins put on a shape follow the shapes you move.
   Open it in a browser.
 
+The viewer is one script, `viewer.js`, that the html page and the svg both
+attach to the board. It reads what it needs from the SVG itself, so any
+page or application can attach it to an exported SVG, the script-free one
+too, and several boards can share a page:
+
+```js
+const board = WhiteboardViewer.attach(element, { mode: 'embedded' });  // or 'window'
+board.reset(); board.destroy();
+```
+
+`'window'` treats the board as the whole page (the wheel zooms, as in the
+html page and the svg); `'embedded'`, the default, leaves the wheel to the
+page and zooms with Ctrl or Cmd held, or a pinch. A pin's thread opens as
+HTML over the board in a page, and inside the SVG when the svg is opened on
+its own.
+
 Comment pins are drawn where they are on the board, with their author's
 picture or initials, and resolved ones too, greyed and ticked (the editor
 hides those). A pin's thread is its tooltip; in the html viewer and the
@@ -265,6 +281,7 @@ an editor update (icon artwork is never among them: it is read per board):
 | `shapes.py`, `connectors.py` | The editor's shape drawings, dash layouts and content boxes; its connector router, line ends and where along a connector a label sits |
 | `drawings.py`, `graphics_probe.js` | The editor's drawings as data; reading the artwork of a board's icons, stickers and stamps from the editor |
 | `canvas.py`, `svg.py`, `html.py` | Renderers |
+| `viewer.js` | The viewer: drag, pan, zoom and comment threads, attached to an exported SVG |
 | `deploy.py`, `storage.py` | Writes outputs, optionally into an Obsidian vault; where files go |
 | `reference.py`, `editor.py`, `geometry_probe.js` | The reference board's spec; pasting it into the editor and reading back what it draws |
 | `snapshot.py` | Reading the reference board back, saving it as the references, and its drift from them |

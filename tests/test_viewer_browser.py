@@ -331,3 +331,56 @@ def test_a_pin_opens_its_thread_and_moves_with_its_element(browser, tmp_path: Pa
         page.mouse.wheel(0, -100)
     assert pin.bounding_box()["width"] == pytest.approx(32, abs=1), "the same size at any zoom"
     assert errors == []
+
+
+def test_a_host_page_can_attach_several_boards_embedded(browser, tmp_path: Path) -> None:
+    """As an application would: two boards in a page, each attached in its own box."""
+    from confluence_whiteboard_exporter.html import VIEWER_JS
+    from confluence_whiteboard_exporter.svg import render_svg
+
+    svg = render_svg(_commented_board())
+    page_html = (
+        "<!doctype html><html><body style='margin:0'>"
+        f"<div id='a' style='width:600px;height:400px'>{svg}</div>"
+        "<div style='height:1200px'></div>"
+        f"<div id='b' style='width:600px;height:400px'>{svg}</div>"
+        f"<script>{VIEWER_JS}</script>"
+        "<script>window.boards = ['a', 'b'].map(id => WhiteboardViewer.attach(document.getElementById(id)));</script>"
+        "</body></html>"
+    )
+    page, errors = _open(browser, tmp_path, page_html)
+    page.evaluate("() => document.querySelectorAll('svg').forEach(s => { s.style.width = '100%'; s.style.height = '100%'; })")
+    page.evaluate("() => window.boards.forEach(b => b.reset())")
+    a = page.locator("#a svg")
+    view_a = a.get_attribute("viewBox")
+
+    box = a.bounding_box()
+    page.mouse.move(box["x"] + 300, box["y"] + 200)
+    page.mouse.wheel(0, 300)
+    page.wait_for_timeout(100)
+    assert a.get_attribute("viewBox") == view_a, "a plain wheel is the page's"
+    assert page.evaluate("() => window.scrollY") > 0
+    page.evaluate("() => window.scrollTo(0, 0)")
+    page.keyboard.down("Control")
+    page.mouse.wheel(0, -100)
+    page.keyboard.up("Control")
+    assert a.get_attribute("viewBox") != view_a, "with Ctrl, it zooms"
+    assert page.locator("#b svg").get_attribute("viewBox") == view_a, "the other board is its own"
+
+    pin = page.locator('#a g.wb-comment[data-id="comment-on"] g.wb-pin > g').first
+    page.mouse.click(*_centre(pin))
+    card = page.locator("#a > div.wb-thread-overlay")
+    assert card.is_visible() and "Ada Lovelace" in card.inner_text() and "Tralala" in card.inner_text()
+    assert page.locator("#a foreignObject.wb-thread").count() == 0, "over the page, not in the SVG"
+    card_box, pin_box = card.bounding_box(), pin.bounding_box()
+    assert card_box["x"] == pytest.approx(pin_box["x"] + pin_box["width"] + 6, abs=2)
+
+    page.evaluate("() => window.boards[0].reset()")
+    assert a.get_attribute("viewBox") == view_a and not card.is_visible()
+    page.evaluate("() => window.boards[0].destroy()")
+    page.keyboard.down("Control")
+    page.mouse.move(box["x"] + 300, box["y"] + 200)
+    page.mouse.wheel(0, -100)
+    page.keyboard.up("Control")
+    assert a.get_attribute("viewBox") == view_a, "destroyed: it no longer listens"
+    assert errors == []

@@ -2,14 +2,18 @@
 
 Unlike JSON Canvas, SVG can show what Confluence draws: dashed outlines,
 shape stereotypes, coloured free text, curved connectors and dividers.
-The output carries no script, so it is safe to embed or share; the
-interactive viewer in html.py wraps it. Image hrefs are relative to the
-SVG file, so it must sit next to `media/`.
+The output carries no script, so it is safe to embed or share. It does
+carry what the viewer (viewer.js) needs as data: each element's id, box
+and parent, each connector's ends, each pin's thread, and on its root the
+exporter's constants (`data-wb-config`), so anything can attach the viewer
+to it; html.py does, for the page and for the SVG opened on its own. Image
+hrefs are relative to the SVG file, so it must sit next to `media/`.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 from collections import Counter
@@ -38,9 +42,38 @@ from .board import (
     anchor_side,
     layout,
 )
-from .connectors import ARROWHEAD_SCALE, ARROWHEADS, End, Route, end_stub, point_at, route, thickness
+from .connectors import (
+    ARROWHEAD_SCALE,
+    ARROWHEADS,
+    BEND_RADIUS,
+    ELBOW_STUB,
+    TENSION,
+    End,
+    Route,
+    end_stub,
+    point_at,
+    route,
+    thickness,
+)
 from .palette import drawn
-from .shapes import DASH_PERIOD, DASH_SHARE, SHAPE_LINE_WIDTH, Section, dash_layout, drawing, fmt, kind_label, resolve
+from .shapes import (
+    CORNER_PHASE,
+    CORNER_SPAN,
+    DASH_PERIOD,
+    DASH_SHARE,
+    EDGE_EXTRA,
+    RUN_DASH,
+    RUN_PHASE,
+    SHAPE_LINE_WIDTH,
+    TEXTURE_WINDOW,
+    Section,
+    dash_layout,
+    drawing,
+    fmt,
+    kind_label,
+    resolve,
+    stretching_commands,
+)
 
 log = logging.getLogger(__name__)
 
@@ -158,7 +191,8 @@ def svg_document(board: Board, shape_map: dict[int, int] | None = None) -> tuple
     vb_h = math.ceil(bounds.y1 - bounds.y0 + 2 * MARGIN)
     svg = "\n".join(
         [
-            f'<svg xmlns="http://www.w3.org/2000/svg" '
+            f'<svg xmlns="http://www.w3.org/2000/svg" data-wb-board="{_xml_escape(board.meta.boardId)}" '
+            f'data-wb-config="{_xml_escape(json.dumps(viewer_config(board, smap), separators=(",", ":")))}" '
             f'viewBox="{vb_x} {vb_y} {vb_w} {vb_h}" width="{vb_w}" height="{vb_h}" '
             f"font-family='{FONT_FAMILY}' "
             f'font-size="{fmt(BASE_FONT_PX)}" style="font-variation-settings:&quot;opsz&quot; {OPTICAL_SIZE}">',
@@ -167,7 +201,7 @@ def svg_document(board: Board, shape_map: dict[int, int] | None = None) -> tuple
             *node_parts,
             *edge_parts,
             *label_parts,
-            *([_PIN_STYLE] if pin_parts else []),
+            *([_PIN_DEFS] if pin_parts else []),
             *pin_parts,
             "</svg>",
         ]
@@ -175,33 +209,37 @@ def svg_document(board: Board, shape_map: dict[int, int] | None = None) -> tuple
     return svg, placeholders
 
 
+def viewer_config(board: Board, smap: dict[int, int]) -> dict[str, object]:
+    """What the viewer (viewer.js) needs beside the SVG's own markup: the
+    exporter's routing and dash constants, so it routes and dashes as the
+    exporter did, and the drawings of this board's shape kinds, which it
+    stretches when text overflows. Kept on the SVG, so whatever attaches the
+    viewer to it needs nothing else. `version` changes only when this or the
+    markup's data attributes change incompatibly."""
+    kinds = {resolve(n.shape_kind, smap) for n in board.nodes if n.kind is Kind.SHAPE}
+    return {
+        "version": 1,
+        "tension": TENSION, "elbowStub": ELBOW_STUB, "bendRadius": BEND_RADIUS,
+        "shapeLineWidth": SHAPE_LINE_WIDTH, "labelGap": LABEL_GAP,
+        "dash": {"period": DASH_PERIOD, "window": TEXTURE_WINDOW, "cornerPhase": CORNER_PHASE,
+                 "cornerSpan": CORNER_SPAN, "edgeExtra": EDGE_EXTRA, "runPhase": RUN_PHASE, "runDash": RUN_DASH},
+        "shapes": {str(k): cmds for k in sorted(kinds) if (cmds := stretching_commands(k))},
+    }
+
+
 # ------------------------------------------------------------ comment pins
 
 # The editor draws a pin the same size on screen at every zoom: its author's
 # picture (or initials) in a ring, about 32 px across. Here it is drawn to be that
 # size when the board fills a window about 1600 by 1000; the viewer keeps
-# it that size as it zooms. Its thread is its tooltip, and a card the
-# viewer opens.
+# it that size as it zooms. Its thread is its tooltip, and data the viewer
+# opens a card from.
 PIN = 32.0
 PIN_SCREEN = 32.0
 _PIN_VIEW = (1600.0, 1000.0)
 _PIN_RING, _PIN_RESOLVED = "#1868DB", "#8590A2"
 _PIN_COLOURS = ("#1868DB", "#E06C00", "#6E5DC6", "#1F845A", "#C9372C", "#0B6BA0", "#AE4787")
-_THREAD_W = 280.0
-_CARD_ROOM = 12.0  # round the card, for its shadow
-_PIN_STYLE = (
-    '<defs><clipPath id="wb-pin-face"><circle r="13"/></clipPath></defs>'
-    "<style>"
-    "g.wb-comment{cursor:pointer;}"
-    f".wb-thread-room{{padding:2px {fmt(_CARD_ROOM)}px {fmt(_CARD_ROOM)}px 2px;}}"
-    ".wb-thread-card{box-sizing:border-box;width:100%;padding:8px 10px;background:#fff;border-radius:6px;"
-    f"box-shadow:0 4px 12px rgba(30,31,33,.25);font-size:12px;line-height:1.35;color:{DEFAULT_STROKE};}}"
-    ".wb-thread-state{font-weight:600;color:#216E4E;margin-bottom:6px;}"
-    ".wb-post+.wb-post{border-top:1px solid #DCDFE4;margin-top:6px;padding-top:6px;}"
-    ".wb-post-head{color:#626F86;margin-bottom:2px;}.wb-post-head b{color:#172B4D;font-weight:600;}"
-    ".wb-post-body p{margin:0;}"
-    "</style>"
-)
+_PIN_DEFS = '<defs><clipPath id="wb-pin-face"><circle r="13"/></clipPath></defs><style>g.wb-comment{cursor:pointer;}</style>'
 
 
 def pin_size(bounds: _Bounds, comments: list[Comment]) -> float:
@@ -214,7 +252,7 @@ def pin_size(bounds: _Bounds, comments: list[Comment]) -> float:
 
 def _comment_pin(c: Comment, size: float) -> str:
     """A pin, centred on the origin of a 32 square scaled to `size`, with
-    its thread as a tooltip and as a hidden card beside it."""
+    its thread as a tooltip and as data for the viewer's card."""
     first = c.posts[0] if c.posts else None
     ring = _PIN_RESOLVED if c.resolved else _PIN_RING
     if first and first.avatar:
@@ -230,18 +268,15 @@ def _comment_pin(c: Comment, size: float) -> str:
              'stroke-linecap="round" stroke-linejoin="round"/></g>') if c.resolved else ""
     parent = f' data-parent="{_xml_escape(c.parent)}"' if c.parent else ""
     state = ' data-resolved="true"' if c.resolved else ""
+    thread = json.dumps(thread_data(c), ensure_ascii=False, separators=(",", ":"))
     return (
         f'<g class="wb-comment" data-id="{_xml_escape(c.id)}"{parent}{state} data-x="{fmt(c.x)}" data-y="{fmt(c.y)}" '
-        f'data-size="{fmt(size)}" transform="translate({fmt(c.x)} {fmt(c.y)})">'
+        f'data-size="{fmt(size)}" data-thread="{_xml_escape(thread)}" transform="translate({fmt(c.x)} {fmt(c.y)})">'
         f"<title>{_xml_escape(thread_text(c))}</title>"
         f'<g class="wb-pin" transform="scale({fmt(size / PIN)})">'
         f'<g opacity="{0.7 if c.resolved else 1}">'
         f'<circle r="16" fill="{ring}" filter="url(#wb-sticky-shadow)"/><circle r="14.5" fill="#fff"/>{face}</g>'
-        f"{badge}"
-        f'<foreignObject class="wb-thread" x="20" y="-18" width="{fmt(_THREAD_W + 2 * _CARD_ROOM)}" height="40" '
-        'display="none"><div xmlns="http://www.w3.org/1999/xhtml" class="wb-thread-room">'
-        f'<div class="wb-thread-card">{_thread_html(c)}</div></div>'
-        "</foreignObject></g></g>"
+        f"{badge}</g></g>"
     )
 
 
@@ -254,16 +289,10 @@ def thread_text(c: Comment) -> str:
     return "\n\n".join(lines) or "Comment"
 
 
-def _thread_html(c: Comment) -> str:
-    parts = ['<div class="wb-thread-state">✓ Resolved</div>'] if c.resolved else []
-    for post in c.posts:
-        stamp = post.when
-        parts.append(
-            f'<div class="wb-post"><div class="wb-post-head"><b>{_xml_escape(post.author or "Someone")}</b>'
-            + (f" · {_xml_escape(stamp)}" if stamp else "")
-            + f'</div><div class="wb-post-body">{post.html}</div></div>'
-        )
-    return "".join(parts) or '<div class="wb-post">No text was read for this comment.</div>'
+def thread_data(c: Comment) -> dict[str, object]:
+    """A thread as the viewer reads it from `data-thread`: plain text only."""
+    return {"resolved": c.resolved, "posts": [
+        {"author": post.author or "Someone", "when": post.when, "text": post.markdown.strip()} for post in c.posts]}
 
 
 def _initials(name: str | None) -> str:
