@@ -1,8 +1,9 @@
 # confluence-whiteboard-exporter
 
 Export Atlassian Confluence Cloud whiteboards to [JSON
-Canvas](https://jsoncanvas.org) (editable in Obsidian), a static SVG
-replica, or an interactive HTML viewer.
+Canvas](https://jsoncanvas.org) (editable in Obsidian), an SVG replica that
+can be dragged, panned and zoomed when opened in a browser, or an HTML
+viewer page. Comment threads come along, pinned where they are on the board.
 
 ## How it works
 
@@ -17,7 +18,13 @@ your saved session, selects everything and captures the canvas's own
 copy/paste payload, which is a readable JSON description of every element.
 If that fails it falls back to reading the Yjs document out of the page,
 which gives geometry and colour but no text. Embedded images are saved as
-the page loads them.
+the page loads them, and the artwork of the icons, stickers and stamps a
+board uses is read from the editor.
+
+Comment pins are not in the copy, so `extract` also reads them from the Yjs
+document and fetches their threads (replies, authors, whether resolved)
+from the Confluence API with the same browser session, saving each
+author's picture with the board.
 
 `convert` works offline from the saved dump, so you can re-render without
 touching Confluence.
@@ -27,6 +34,32 @@ labels itself, writing little of it back. The export reproduces those rules
 from the editor's own shape definitions, text engine and router, and a
 [reference board](#the-reference-board) checks every element against what
 the live editor draws.
+
+## Architecture
+
+```
+extract (browser)                      convert (offline)
+
+clipboard copy ─┐                                    ┌─→ canvas.py ──────────────────→ .canvas
+Yjs document ───┼─→ dump.json + media/ ─→ board.py ──┤
+REST threads ───┘                         (Board)    └─→ svg.py ─┬─→ html.py + viewer.js ─→ .svg, .html
+                                                                 └─→ (--static-svg) ─────→ .svg
+```
+
+- **The dump** (`dump.json`, schema in `model.py`) is everything read from
+  Confluence for one board: its elements in either format, the artwork it
+  uses and its comment threads. Nothing after it needs Confluence.
+- **The board model** (`board.py`) normalises either dump format into one
+  `Board` of nodes, edges and comments, and lays it out the way the editor
+  does: text, box sizes, growth, stable ids.
+- **The renderers** draw a `Board`. `svg.py` is the faithful replica and
+  carries no script; `canvas.py` maps the board onto JSON Canvas.
+- **The viewer** (`viewer.js`) is the only script. It adds drag, pan, zoom
+  and comment threads to an exported SVG, reading everything it needs from
+  the SVG's own data attributes, so the drawing and the behaviour stay
+  apart: `html.py` writes the SVG with the viewer attached to it, in a page
+  or inside the SVG itself, and any other page or application can attach it
+  the same way ([embedding](#embedding-the-viewer)).
 
 ## Setup
 
@@ -40,7 +73,9 @@ cp .env.example .env    # then fill in your values
 `.env` holds `CONFLUENCE_BASE_URL`, `CONFLUENCE_EMAIL` and
 `CONFLUENCE_API_TOKEN` and is gitignored; it is read from the directory you
 run the command in. The same values can be given as `--base-url`, `--email`
-and `--token`. Create a token at
+and `--token`. The token is used to list a space's boards and to look up a
+single board; reading boards and their comments uses the browser session.
+Create a token at
 <https://id.atlassian.com/manage-profile/security/api-tokens>. Tokens
 expire; when Confluence rejects yours, the command says so.
 
@@ -82,10 +117,13 @@ uv run confluence-whiteboard-exporter export <spaceKey> --vault ~/Obsidian/Vault
 ```
 
 Boards whose `dump.json` already exists are skipped, as are outputs that
-exist; pass `--force` to re-extract or re-render. `-v` shows progress
-detail, `--headed` shows the browser, `--no-media` skips images, and
-`--strategy clipboard|fiber` forces one way of reading a board. Every
-command has `--help`.
+exist; pass `--force` to re-extract or re-render. A board extracted by an
+earlier version lacks what was added since (icon artwork, comments) until
+it is extracted again with `--force`. `-v` shows progress detail,
+`--headed` shows the browser, `--no-media` skips images (and comment
+authors' pictures), `--strategy clipboard|fiber` forces one way of reading a
+board, and `--static-svg` writes the SVG without the viewer. Every command
+has `--help`.
 
 ### Output formats
 
@@ -95,48 +133,41 @@ command has `--help`.
   are drawn plain, connectors with a loose end are left out, and dividers
   become thin cards. Stickies are cards in their colour, sections are groups
   named by their title, and library icons, stickers and stamps point at
-  their image files. Each comment thread is a card beside where its pin is.
-  `--collision-fix` nudges overlapping cards apart.
+  their image files. Each comment thread is a card beside where its pin is,
+  purple while open and green once resolved. `--collision-fix` nudges
+  overlapping cards apart.
 - **svg**: a faithful replica. Shapes are drawn from the editor's own
   definitions and grown to fit their text as the editor grows them; text is
   laid out with the editor's character widths, weights and spacing; colours
   are the editor's, in its light theme; connectors are routed the way the
   editor routes them, through their bend handles, with its line ends
   (arrows, diamonds, crow's feet, ...) and with labels on or beside the
-  line. Opened on its own in a browser it can be dragged, panned and zoomed
-  like the html viewer; embedded (`![[board.svg]]`, `<img>`) its script does
-  not run and it is the static drawing. Pass `--static-svg` to leave the
-  script out, for places that block SVG carrying script (some mail filters).
-- **html**: the same drawing with drag, pan and zoom; connectors, labels and
-  the stamps and comment pins put on a shape follow the shapes you move.
-  Open it in a browser.
+  line. It carries the viewer: opened on its own in a browser it fills the
+  window and can be dragged, panned and zoomed. Embedded (`![[board.svg]]`
+  in Obsidian, an `<img>`) its script does not run and it is the static
+  drawing. `--static-svg` leaves the script out, for places that block SVG
+  carrying script (some mail filters); it still carries the viewer's data,
+  so the viewer can be attached to it later.
+- **html**: the same SVG in a page with the viewer attached. Open it in a
+  browser.
 
-The viewer is one script, `viewer.js`, that the html page and the svg both
-attach to the board. It reads what it needs from the SVG itself, so any
-page or application can attach it to an exported SVG, the script-free one
-too, and several boards can share a page:
-
-```js
-const board = WhiteboardViewer.attach(element, { mode: 'embedded' });  // or 'window'
-board.reset(); board.destroy();
-```
-
-`'window'` treats the board as the whole page (the wheel zooms, as in the
-html page and the svg); `'embedded'`, the default, leaves the wheel to the
-page and zooms with Ctrl or Cmd held, or a pinch. A pin's thread opens as
-HTML over the board in a page, and inside the SVG when the svg is opened on
-its own.
-
-Comment pins are drawn where they are on the board, with their author's
-picture or initials, and resolved ones too, greyed and ticked (the editor
-hides those). A pin's thread is its tooltip; in the html viewer and the
-svg opened in a browser, a click opens it beside the pin, and pins can be
-dragged.
+In the viewer, dragging an element moves it with the connectors, labels,
+stamps and comment pins on it, and dragging the board pans it; the wheel
+zooms. Moves are not saved: reloading shows the board as exported.
 
 Text is drawn in Atlassian Sans where it is installed; elsewhere a system
 font stands in, and line breaks can differ slightly. SVG and HTML reference
 images relative to their own location, so keep them next to their `media/`
 folder.
+
+### Comments
+
+Comment pins are drawn where they are on the board, with their author's
+picture or initials, and pins put on an element move with it. Resolved
+threads are drawn too, greyed and ticked (the editor hides them). A pin
+keeps its size on screen at every zoom, as in the editor. Its thread is its
+tooltip; in the viewer a click opens it beside the pin (who wrote each post,
+when, and its text, as plain text), and a click on the board closes it.
 
 ### What is drawn
 
@@ -152,20 +183,59 @@ extracted by an earlier version shows its icons as named placeholders until
 it is extracted again. Draw a kind as another with `--shape-map
 'server=database'` (svg and html).
 
-Free text, shapes, stickies, sections, stickers and stamps (their images
-read with the board, like the icons), connectors with their bends and
-labels, images, freehand lines (drawn straight, end to end) and comment
-threads are supported. Tables, mind maps, cards, Jira issues and the other element
-types are left out for now. Anything a format cannot show is reported as a warning
-rather than dropped silently. [docs/plan.md](docs/plan.md) lists what is
-still missing, such as the dark theme.
+Free text, shapes, stickies (at any font scale), sections, stickers and
+stamps (their images read with the board, like the icons), connectors with
+their bends and labels, images, freehand lines (drawn straight, end to end)
+and comment threads are supported. Tables, mind maps, cards, Jira issues and
+the other element types are left out for now. Anything a format cannot show
+is reported as a warning rather than dropped silently.
+[docs/plan.md](docs/plan.md) lists what is still missing, such as the dark
+theme.
+
+### Embedding the viewer
+
+The viewer is one script, `confluence_whiteboard_exporter/viewer.js`, with
+one entry point. It needs only an exported SVG, the `--static-svg` one too,
+so a page or an application (such as an Obsidian plugin) can show boards
+with the same behaviour as the exports, several to a page:
+
+```html
+<div id="board" style="height: 480px"><!-- an exported SVG, inlined --></div>
+<script src="viewer.js"></script>
+<script>
+  const board = WhiteboardViewer.attach(document.getElementById('board'), { mode: 'embedded' });
+  // board.reset(): every move undone, the whole board in view; board.destroy(): stop listening
+</script>
+```
+
+| Option | Values | |
+|---|---|---|
+| `mode` | `'embedded'` (default), `'window'` | Embedded leaves the wheel to the page and zooms with Ctrl or ⌘ held, or a trackpad pinch; window is the board as the whole page, where the wheel zooms and a root `<svg>` is sized to the window |
+| `threads` | `'overlay'`, `'inline'` | A thread's card as HTML over the board (the default in a page), or inside the SVG (the default for an SVG on its own) |
+
+What it reads from the SVG is its contract with the exporter:
+
+- the root's `data-wb-board` (the board id) and `data-wb-config` (JSON: the
+  exporter's routing and dash constants and the drawings of the board's
+  shape kinds, with a `version` that changes only when the contract does);
+- each element's `g.wb-node` with `data-id`, its box (`data-x`, `data-y`,
+  `data-w`, `data-h`), `data-kind` and `data-parent` (what a stamp is on);
+- each connector's `path.wb-edge` with its ends (`data-src`, `data-tgt`), their anchors (`data-sa`,
+  `data-ta`), `data-routing`, its bends (`data-wp`, `data-axes`) and `data-ends`;
+- each pin's `g.wb-comment` with `data-x`, `data-y`, `data-parent` and
+  `data-thread` (JSON: `resolved`, and each post's `author`, `when` and
+  `text`, plain text only: cards are built from text, never markup).
+
+The html page and the svg attach it with `mode: 'window'`.
 
 ## Output layout
 
 ```
 out/<spaceKey>/_boards.json
 out/<spaceKey>/<boardId>/dump.json
-out/<spaceKey>/<boardId>/media/<fileId>.<ext>
+out/<spaceKey>/<boardId>/media/<fileId>.<ext>          # the board's images
+out/<spaceKey>/<boardId>/media/{icon,sticker,stamp}-<id>.<ext>  # the editor's artwork the board uses
+out/<spaceKey>/<boardId>/media/avatar-<accountId>.png  # comment authors' pictures
 out/<spaceKey>/<boardId>/<boardId>.{canvas,svg,html}
 ```
 
@@ -188,8 +258,11 @@ uv run pytest
 
 The tests need no Confluence and no network.
 `tests/fixtures/sample_dump.json` is a minimal hand-made board in the
-clipboard format. `tests/test_viewer_browser.py` drives the HTML viewer in
-Chrome (or Playwright's Chromium) and is skipped when neither is available.
+clipboard format. `tests/test_viewer_browser.py` drives the viewer in
+Chrome (or Playwright's Chromium) in each of its homes: the html page, the
+svg opened on its own, and a page attaching it to several boards; it is
+skipped when neither browser is available. `tests/test_comments.py` covers
+reading comment pins and threads, with Yjs and REST data built in the test.
 
 ### The reference board
 
@@ -201,14 +274,15 @@ variations, and what the editor made of it.
   grid of 264 labelled cells: every shape kind, outlines, fills, colours,
   text alignment, sizes, headings and lists, free text, connectors of every
   routing, line end, weight and style, bend handles and labels, stickies,
-  sections, stickers and stamps.
+  sections, stickers and stamps. Comments are not on it: a paste cannot
+  make them.
 - **The references** (`tests/reference/golden/`, committed) are the editor's
   drawn geometry for each cell (`geometry.json`: each element's box, each
   connector's path, each label's box) and an image of each cell at 100%
   (`images/`). The cells that show the editor's artwork (icons, stickers,
-  stamps)
-  keep their images in the per-user cache instead, so the repo carries none
-  of it; a clone without them still runs every test, on geometry.
+  stamps) keep their images in the per-user cache instead, so the repo
+  carries none of it; a clone without them still runs every test, on
+  geometry.
 - **The tests** (`tests/test_reference_geometry.py`) export the spec and
   compare it with the references, one test per cell: boxes within 1.5 board
   units, paths within 2. A cell we do not draw like the editor yet goes in
@@ -272,16 +346,16 @@ an editor update (icon artwork is never among them: it is read per board):
 |---|---|
 | `cli.py` | The command line |
 | `discover.py` | Lists a space's whiteboards via the Confluence REST API; creates the reference board |
-| `extract.py` | `auth attach` login, and the `Extractor` browser session |
-| `fiber_probe.js` | Injected into the board page to capture its content |
-| `model.py` | Schema of the raw dump file |
+| `extract.py` | `auth attach` login, and the `Extractor` browser session: the copy, the artwork, the comment threads |
+| `fiber_probe.js` | Injected into the board page to read its Yjs document (the fallback, and comment pins) |
+| `model.py` | Schema of the dump file |
 | `comments.py` | Comment pins from the board's Yjs document, placed on the clipboard copy, with their threads from the REST API |
 | `board.py` | Normalises either kind of dump into one `Board`; text layout, box sizes and stable ids |
 | `adf.py`, `palette.py` | Rich text (Atlassian Document Format) to HTML and Markdown; the editor's colours |
 | `shapes.py`, `connectors.py` | The editor's shape drawings, dash layouts and content boxes; its connector router, line ends and where along a connector a label sits |
 | `drawings.py`, `graphics_probe.js` | The editor's drawings as data; reading the artwork of a board's icons, stickers and stamps from the editor |
-| `canvas.py`, `svg.py`, `html.py` | Renderers |
-| `viewer.js` | The viewer: drag, pan, zoom and comment threads, attached to an exported SVG |
+| `canvas.py`, `svg.py` | Renderers: JSON Canvas, and the SVG replica with the viewer's data |
+| `viewer.js`, `html.py` | The viewer (drag, pan, zoom, comment threads), and the page and SVG that attach it to the board |
 | `deploy.py`, `storage.py` | Writes outputs, optionally into an Obsidian vault; where files go |
 | `reference.py`, `editor.py`, `geometry_probe.js` | The reference board's spec; pasting it into the editor and reading back what it draws |
 | `snapshot.py` | Reading the reference board back, saving it as the references, and its drift from them |
@@ -289,6 +363,6 @@ an editor update (icon artwork is never among them: it is read per board):
 
 [docs/confluence-whiteboard-model.md](docs/confluence-whiteboard-model.md)
 documents the whiteboard data model and the editor's drawing rules: element
-types, shape kinds, text layout, colours, connector routing, line ends and
-the property dictionary. [docs/plan.md](docs/plan.md) has what is done, what
-is left, and how the reference board was built.
+types, shape kinds, text layout, colours, connector routing, line ends,
+comment pins and the property dictionary. [docs/plan.md](docs/plan.md) has
+what is done, what is left, and how the reference board was built.

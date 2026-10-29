@@ -231,7 +231,13 @@ never exported) and `isAuthorVisible`. Yjs keys: `c`, `tx`, `a`, `va`,
   centre: a 100 sticky is drawn 144, and a scale-0.5 one 144 square,
   centred on the 72 box it would have been.
 
-As with shapes, the growth is not stored. Colours resolve through the
+A pasted sticky stores none of this growth, as with shapes. One the
+editor has drawn and saved stores `position` as the centre of its scaled
+and grown box, below `basisPosition` by half the growth (a 144 sticky at
+scale 3.54 is 510 square, its centre 183 below its basis), while
+`basisSize` stays 144. So a sticky's box is laid out from its basis, never
+from the stored shift: taking that shift for growth, as for a shape, and
+scaling the result would scale it twice. Colours resolve through the
 palette (stored `#FFDEB8`, orange, is drawn `#FCE4A6`); there is no
 outline, and a soft shadow.
 

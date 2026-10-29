@@ -22,7 +22,15 @@ Checked board by board, side by side with the live editor:
   with their real artwork, read from the editor per board; the repo carries
   none of it.
 - Stickies and sections, sized and drawn as the editor does; in JSON
-  Canvas a coloured card and a group with the section's title.
+  Canvas a coloured card and a group with the section's title. Stickies at
+  a large font scale, as the editor saves them, are scaled once.
+- Stickers and stamps, with their artwork read per board; a stamp moves
+  with what it was put on.
+- Comment threads: pins where they are on the board, with replies, authors
+  and resolution, in all three formats.
+- The viewer: one script, attached to an exported SVG, in the html page,
+  inside the SVG itself, or in any page.
+- Export into an Obsidian vault (`--vault`, `--vault-prefix`).
 - The Confluence API token: a clear message when it is rejected.
 
 ## Remaining
@@ -42,6 +50,19 @@ Checked board by board, side by side with the live editor:
 - **A sticky's author name**, shown when `isAuthorVisible` is set, is not
   drawn: the board stores only an account id.
 - **Dark theme**: colours are resolved against the light theme only.
+  CSS variables on the SVG, as [Pele](https://pele.run) themes its
+  diagrams, would let one export follow the page or Obsidian theme it is
+  shown in.
+- **Comment text** is plain in the viewer's cards: bold, links and the like
+  show as their Markdown. Comments are not on the reference board (a paste
+  cannot make them), so their placement is checked by tests built on a
+  real board's data, not against the editor cell by cell.
+- **The viewer in a page** has mouse drag, pan and wheel or Ctrl-wheel
+  zoom; touch (one finger scrolling the page, two zooming), keyboard
+  control and zoom buttons are still to come.
+- **Text in the SVG is HTML** (`foreignObject`), which browsers draw but
+  some SVG renderers and sanitizers do not; plain SVG text, laid out with
+  the same metrics, would draw everywhere.
 - **List bullets** are the browser's: a little larger than the editor's
   and about 4 units further from the text.
 - **Text sits up to a pixel high** in our renders (more at small font
@@ -343,7 +364,54 @@ icons, stickers and stamps) are screenshots of that artwork, so they are kept in
 the per-user cache like the artwork itself, and the ones committed earlier
 were removed from the repository's history.
 
+## Comments
+
+Comments were left out: the clipboard copy does not include them. A
+comment is two things. Its pin is an element of the Yjs document
+(`comment`: a 32 square, its thread's marker ref, who made it, whether it
+is resolved, and the element it is on, with its offset from that element's
+top-left, as for stamps). Its thread is Confluence content: inline comments
+on the whiteboard, found by that marker ref, with replies under the first.
+
+So the extractor reads the pins from the Yjs document even when it copies
+the board, and the threads from the REST API with the browser's session
+(no API token needed), saving each author's picture in `media/`. The copy
+is in its own frame, translated by a constant, and not in z-order, so a pin
+is moved by the offset every boxed element agrees on, and what it is on is
+found by type, place and size. A scratch board with a free pin, one on a
+section and a resolved one checked it: every pin lands where the editor
+draws it, on the element it was put on.
+
+The editor draws a pin the same size on screen at every zoom and hides
+resolved ones; the export draws resolved ones too, greyed and ticked, and
+keeps pins their size as the viewer zooms. JSON Canvas gets a card per
+thread.
+
+## The viewer
+
+The SVG first carried a script for drag, pan and zoom; it was split into a
+script-free SVG and an HTML viewer page, as SVG with script is stripped by
+Obsidian embeds and blocked by mail filters, and the script then came back
+into the SVG by default (`--static-svg` leaves it out), so an SVG opened on
+its own can be explored.
+
+Comparing with [Pele](https://github.com/obsidianmd/pele), Obsidian's
+Mermaid renderer, which keeps its SVG free of behaviour and lets the host
+attach zoom to the element holding it, the viewer became one script,
+`viewer.js`, with one entry point, `WhiteboardViewer.attach(element,
+{mode})`. It reads everything from the SVG's data attributes (the
+exporter's constants and the board's drawings in `data-wb-config`, each
+pin's thread in `data-thread`), so it works on any export, the script-free
+one too, several boards to a page. The html page and the SVG attach it to
+themselves as before; a host page attaches it embedded, leaving the wheel
+to the page. The README documents the contract.
+
 ## Later
 
-- Export a space straight into an Obsidian vault (`--vault`, `--vault-prefix`)
-  and check the canvases there.
+- **An Obsidian plugin** that shows boards interactively in notes, as
+  `![[board.svg]]` shows only the static drawing at the note's width: a
+  `whiteboard` code block naming the SVG, placed inline and attached
+  embedded, and a tab view attached as a window, bundling `viewer.js`
+  unchanged.
+- Then, from the list above: touch and keyboard in the viewer, the dark
+  theme through CSS variables, and plain SVG text.
