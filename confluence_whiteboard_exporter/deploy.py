@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .board import Board, load_board
 from .canvas import render_canvas
-from .html import render_html
+from .html import render_html, render_interactive_svg
 from .storage import atomic_write_text
 from .svg import render_svg
 
@@ -30,13 +30,16 @@ def render(
     vault_prefix: str = "",
     collision_fix: bool = False,
     shape_map: dict[int, int] | None = None,
+    static_svg: bool = False,
 ) -> tuple[str, str]:
-    """Return (file content, one-line summary) for `board` in `fmt`."""
+    """Return (file content, one-line summary) for `board` in `fmt`. The SVG
+    carries the viewer's script unless `static_svg` is set."""
     if fmt == "canvas":
         doc = render_canvas(board, vault_prefix=vault_prefix, resolve_collisions=collision_fix)
         return doc.to_json(), f"{len(doc.nodes)} nodes, {len(doc.edges)} edges"
     if fmt in ("svg", "html"):
-        out = (render_svg if fmt == "svg" else render_html)(board, shape_map=shape_map)
+        renderer = render_html if fmt == "html" else render_svg if static_svg else render_interactive_svg
+        out = renderer(board, shape_map=shape_map)
         return out, f"{len(out) // 1024} KB"
     raise ValueError(f"unknown format {fmt!r}; expected one of {', '.join(FORMATS)}")
 
@@ -50,6 +53,7 @@ def export_dump(
     force: bool = False,
     collision_fix: bool = False,
     shape_map: dict[int, int] | None = None,
+    static_svg: bool = False,
 ) -> list[Written]:
     """Render one dump in each format.
 
@@ -74,7 +78,8 @@ def export_dump(
         copied = copy_media(dump_path.parent / "media", dest / "media")
     for fmt, out in todo:
         content, summary = render(
-            board, fmt, vault_prefix=vault_prefix, collision_fix=collision_fix, shape_map=shape_map
+            board, fmt, vault_prefix=vault_prefix, collision_fix=collision_fix, shape_map=shape_map,
+            static_svg=static_svg,
         )
         atomic_write_text(out, content)
         if copied:

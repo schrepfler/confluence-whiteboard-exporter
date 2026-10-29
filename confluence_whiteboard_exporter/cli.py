@@ -35,20 +35,28 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 FORMAT_HELP = (
     "Output format; repeat for several. canvas = JSON Canvas (editable in "
-    "Obsidian), svg = static replica (safe to embed), html = interactive "
-    "viewer (drag, pan, zoom)."
+    "Obsidian), svg = replica with drag, pan and zoom when opened in a browser "
+    "(static where embedded), html = the same in a viewer page."
 )
 
 
 def format_option(default: tuple[str, ...] = ("canvas",)) -> Callable[[F], F]:
-    return click.option(
-        "-f", "--format", "formats",
-        type=click.Choice(["canvas", "svg", "html"]),
-        multiple=True,
-        default=default,
-        show_default=True,
-        help=FORMAT_HELP,
-    )
+    def decorate(f: F) -> F:
+        f = click.option(
+            "--static-svg",
+            is_flag=True,
+            help="(svg) Leave the viewer's script out of the SVG, for places that "
+                 "block script-bearing SVG (some mail filters, strict hosts).",
+        )(f)
+        return click.option(
+            "-f", "--format", "formats",
+            type=click.Choice(["canvas", "svg", "html"]),
+            multiple=True,
+            default=default,
+            show_default=True,
+            help=FORMAT_HELP,
+        )(f)
+    return decorate
 
 
 def _env(name: str) -> str | None:
@@ -398,6 +406,7 @@ def extract(
     headed: bool,
     vault_dir: Path | None,
     formats: tuple[str, ...],
+    static_svg: bool,
     vault_prefix: str,
 ) -> None:
     """Extract a board (or every board in a space) via headless browser."""
@@ -478,6 +487,7 @@ def extract(
                     dest_dir=_vault_dest(vault_dir, vault_prefix),
                     vault_prefix=vault_prefix.strip("/"),
                     force=force,
+                    static_svg=static_svg,
                 )
             )
 
@@ -525,6 +535,7 @@ def convert(
     all_space: str | None,
     force: bool,
     formats: tuple[str, ...],
+    static_svg: bool,
     vault_dir: Path | None,
     vault_prefix: str,
     collision_fix: bool,
@@ -558,6 +569,7 @@ def convert(
                 force=force,
                 collision_fix=collision_fix,
                 shape_map=shape_map,
+                static_svg=static_svg,
             )
         )
 
@@ -590,6 +602,7 @@ def export(
     vault_dir: Path | None,
     vault_prefix: str,
     formats: tuple[str, ...],
+    static_svg: bool,
 ) -> None:
     """End-to-end: discover → extract → render every whiteboard in a space."""
     ctx.invoke(discover, space=space, method=method)
@@ -608,11 +621,13 @@ def export(
             vault_dir=vault_dir,
             vault_prefix=vault_prefix,
             formats=formats,
+            static_svg=static_svg,
         )
     except SystemExit as e:
         exit_code = int(e.code or 0)
     if vault_dir is None:
-        ctx.invoke(convert, dump_path=None, all_space=space, force=force, formats=formats)
+        ctx.invoke(convert, dump_path=None, all_space=space, force=force, formats=formats,
+                   static_svg=static_svg)
     if exit_code:
         sys.exit(exit_code)
 

@@ -1,8 +1,9 @@
 """Interactive HTML viewer: the static SVG plus drag, pan and zoom.
 
-Kept separate from svg.py because SVG files that execute script are
-routinely stripped or blocked (Obsidian embeds, mail filters), while a
-plain HTML page is the normal way to ship an interactive document.
+The same script also goes inside the SVG by default. Kept separate from
+svg.py so the static drawing stays script-free (--static-svg): SVG files
+that execute script are stripped by Obsidian embeds and blocked by many
+mail filters.
 """
 
 from __future__ import annotations
@@ -37,21 +38,7 @@ def render_html(board: Board, shape_map: dict[int, int] | None = None) -> str:
     title = _xml_escape(board.meta.title or board.meta.boardId)
     svg, placeholders = svg_document(board, shape_map)
     warn_placeholders("html", board, placeholders)
-    # Drawings the viewer regrows when text overflows, keyed by data-kind.
-    kinds = {resolve(n.shape_kind, shape_map) for n in board.nodes if n.kind is Kind.SHAPE}
-    drawings = {k: cmds for k in sorted(kinds) if (cmds := stretching_commands(k))}
-    script = (
-        _VIEWER_JS.replace("__ELBOW_STUB__", str(ELBOW_STUB))
-        .replace("__BEND_RADIUS__", str(BEND_RADIUS))
-        .replace("__SHAPE_LINE_WIDTH__", str(SHAPE_LINE_WIDTH))
-        .replace("__LABEL_GAP__", str(LABEL_GAP))
-        .replace("__TENSION__", str(TENSION))
-        .replace("__SHAPES__", json.dumps(drawings, separators=(",", ":")))
-        .replace("__DASH__", json.dumps({
-            "period": DASH_PERIOD, "window": TEXTURE_WINDOW, "cornerPhase": CORNER_PHASE,
-            "cornerSpan": CORNER_SPAN, "edgeExtra": EDGE_EXTRA, "runPhase": RUN_PHASE, "runDash": RUN_DASH,
-        }))
-    )
+    script = viewer_script(board, shape_map)
     return "\n".join(
         [
             "<!doctype html>",
@@ -68,6 +55,49 @@ def render_html(board: Board, shape_map: dict[int, int] | None = None) -> str:
             "</body>",
             "</html>",
         ]
+    )
+
+
+def render_interactive_svg(board: Board, shape_map: dict[int, int] | None = None) -> str:
+    """The static SVG with the viewer's script inside it: drag, pan and zoom
+    when the file is opened on its own in a browser. Where scripts are
+    stripped (an Obsidian embed, an <img>) it is the static drawing."""
+    svg, placeholders = svg_document(board, shape_map)
+    warn_placeholders("svg", board, placeholders)
+    if not svg.endswith("</svg>"):
+        return svg
+    script = (_FILL_WINDOW_JS + viewer_script(board, shape_map)).replace("]]>", "]]]]><![CDATA[>")
+    return (svg.removesuffix("</svg>")
+            + "<style>g.wb-node{cursor:move;}</style>\n"
+            + f"<script><![CDATA[{script}]]></script>\n</svg>")
+
+
+# Opened on its own, the SVG fills the window, as the viewer page does;
+# embedded, it keeps its own size.
+_FILL_WINDOW_JS = """
+if (document.documentElement instanceof SVGSVGElement) {
+  document.documentElement.setAttribute('width', '100%');
+  document.documentElement.setAttribute('height', '100%');
+}
+"""
+
+
+def viewer_script(board: Board, shape_map: dict[int, int] | None = None) -> str:
+    """The viewer's script for `board`, with the exporter's constants in it."""
+    # Drawings the viewer regrows when text overflows, keyed by data-kind.
+    kinds = {resolve(n.shape_kind, shape_map) for n in board.nodes if n.kind is Kind.SHAPE}
+    drawings = {k: cmds for k in sorted(kinds) if (cmds := stretching_commands(k))}
+    return (
+        _VIEWER_JS.replace("__ELBOW_STUB__", str(ELBOW_STUB))
+        .replace("__BEND_RADIUS__", str(BEND_RADIUS))
+        .replace("__SHAPE_LINE_WIDTH__", str(SHAPE_LINE_WIDTH))
+        .replace("__LABEL_GAP__", str(LABEL_GAP))
+        .replace("__TENSION__", str(TENSION))
+        .replace("__SHAPES__", json.dumps(drawings, separators=(",", ":")))
+        .replace("__DASH__", json.dumps({
+            "period": DASH_PERIOD, "window": TEXTURE_WINDOW, "cornerPhase": CORNER_PHASE,
+            "cornerSpan": CORNER_SPAN, "edgeExtra": EDGE_EXTRA, "runPhase": RUN_PHASE, "runDash": RUN_DASH,
+        }))
     )
 
 

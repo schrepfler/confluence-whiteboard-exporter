@@ -97,14 +97,16 @@ command has `--help`.
   named by their title, and library icons, stickers and stamps point at
   their image files.
   `--collision-fix` nudges overlapping cards apart.
-- **svg**: a faithful static replica. Shapes are drawn from the editor's own
+- **svg**: a faithful replica. Shapes are drawn from the editor's own
   definitions and grown to fit their text as the editor grows them; text is
   laid out with the editor's character widths, weights and spacing; colours
   are the editor's, in its light theme; connectors are routed the way the
   editor routes them, through their bend handles, with its line ends
   (arrows, diamonds, crow's feet, ...) and with labels on or beside the
-  line. It contains no script, so it is safe to embed (`![[board.svg]]`) or
-  attach.
+  line. Opened on its own in a browser it can be dragged, panned and zoomed
+  like the html viewer; embedded (`![[board.svg]]`, `<img>`) its script does
+  not run and it is the static drawing. Pass `--static-svg` to leave the
+  script out, for places that block SVG carrying script (some mail filters).
 - **html**: the same drawing with drag, pan and zoom; connectors, labels and
   the stamps put on a shape follow the shapes you move. Open it in a
   browser.

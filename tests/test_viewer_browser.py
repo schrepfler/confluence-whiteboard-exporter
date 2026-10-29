@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from confluence_whiteboard_exporter.board import load_board
-from confluence_whiteboard_exporter.html import render_html
+from confluence_whiteboard_exporter.html import render_html, render_interactive_svg
 
 sync_api = pytest.importorskip("playwright.sync_api")
 
@@ -36,11 +36,11 @@ def browser() -> Iterator[object]:
         b.close()
 
 
-def _open(browser, tmp_path: Path, html: str):
+def _open(browser, tmp_path: Path, html: str, name: str = "board.html"):
     page = browser.new_page(viewport={"width": 1200, "height": 800})
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
-    path = tmp_path / "board.html"
+    path = tmp_path / name
     path.write_text(html)
     page.goto(path.as_uri())
     page.wait_for_timeout(300)
@@ -64,6 +64,20 @@ def test_dragging_a_node_moves_it_and_its_connector(browser, tmp_path: Path) -> 
     assert edge.get_attribute("d") != d_before, "the connector follows its node"
     moved = node.bounding_box()
     assert moved["x"] == pytest.approx(box["x"] + 80, abs=2)
+    assert errors == []
+
+
+def test_the_svg_opened_on_its_own_fills_the_window_and_drags(browser, tmp_path: Path) -> None:
+    page, errors = _open(browser, tmp_path, render_interactive_svg(load_board(FIXTURE)), "board.svg")
+    assert page.evaluate("() => document.documentElement.getBoundingClientRect().width") == 1200
+    node = page.locator('g.wb-node[data-id="shape-A"]')
+    box = node.bounding_box()
+    cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    page.mouse.move(cx, cy)
+    page.mouse.down()
+    page.mouse.move(cx + 80, cy + 40, steps=5)
+    page.mouse.up()
+    assert node.bounding_box()["x"] == pytest.approx(box["x"] + 80, abs=2)
     assert errors == []
 
 
